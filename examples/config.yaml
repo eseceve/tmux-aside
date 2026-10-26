@@ -1,0 +1,77 @@
+# tmux-aside config: copy to ~/.config/tmux-aside/config.yaml
+# Every key is described in the README.
+
+theme:
+  accent: "#be95ff"
+  warning: "#f1c21b"
+  success: green
+  danger: red
+  muted: "#7b7c7e"
+  selection: "#393939"
+  current: "#78a9ff"
+
+sections:
+  - plugin: agents
+    title: Agents
+    mode: stream
+    density: comfortable
+    args:
+      - --group
+      - none
+      - --diff
+      - --stall-after
+      - 60s
+      - --notify
+      - waiting
+      - --notify-via
+      - tmux
+
+  - plugin: github
+    title: Pull requests
+    density: comfortable
+    interval: 60s
+    args:
+      - --query
+      # Add repo:owner/name qualifiers to watch only some repositories.
+      - is:pr is:open author:@me archived:false
+      - --state-color
+      - number
+      - --state-color
+      - bar
+      - --merge-info
+
+  - plugin: github
+    title: Review requested
+    density: comfortable
+    collapsed: true
+    interval: 60s
+    args:
+      - --query
+      - is:pr is:open review-requested:@me archived:false
+      - --state-color
+      - number
+      - --state-color
+      - bar
+      - --byline
+
+  # macOS only.
+  - plugin: calendar
+    title: Calendar
+    counts: false
+    interval: 60s
+    pin: bottom
+    args: ["--limit", "4"]
+
+  - plugin: usage
+    title: Usage
+    counts: false
+    interval: 60s
+    pin: bottom
+    args: ["--only-running"]
+
+  - plugin: clock
+    title: ${today}
+    counts: false
+    interval: 1s
+    pin: bottom
+    args: ["America/New_York=New York", "Europe/London=London"]

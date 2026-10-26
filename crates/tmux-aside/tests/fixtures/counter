@@ -1,0 +1,6 @@
+#!/bin/sh
+echo run >> "$1"
+runs=$(wc -l < "$1" | tr -d ' ')
+echo '{"type":"hello","protocol":1}'
+echo '{"type":"notice","text":"unknown message types are ignored"}'
+echo "{\"type\":\"snapshot\",\"title\":\"Counter\",\"rows\":[{\"text\":\"runs $runs\",\"color\":\"ignored\"}]}"

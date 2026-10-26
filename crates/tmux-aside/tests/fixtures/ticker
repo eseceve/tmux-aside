@@ -1,0 +1,8 @@
+#!/bin/sh
+echo '{"type":"hello","protocol":1}'
+tick=0
+while true; do
+  tick=$((tick + 1))
+  echo "{\"type\":\"snapshot\",\"title\":\"Ticker\",\"rows\":[{\"text\":\"tick $tick\"}]}"
+  sleep "$1"
+done

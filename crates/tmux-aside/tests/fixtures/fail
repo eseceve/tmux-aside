@@ -1,0 +1,4 @@
+#!/bin/sh
+echo run >> "$1"
+echo boom >&2
+exit 3

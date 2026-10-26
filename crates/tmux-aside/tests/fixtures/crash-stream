@@ -1,0 +1,5 @@
+#!/bin/sh
+echo start >> "$1"
+echo '{"type":"hello","protocol":1}'
+echo '{"type":"snapshot","title":"Crashy","rows":[{"text":"alive"}]}'
+exit 1

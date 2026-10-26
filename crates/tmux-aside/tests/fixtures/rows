@@ -1,0 +1,12 @@
+#!/bin/sh
+title=$1
+count=$2
+rows=""
+i=1
+while [ "$i" -le "$count" ]; do
+  [ -n "$rows" ] && rows="$rows,"
+  rows="$rows{\"text\":\"row $i\"}"
+  i=$((i + 1))
+done
+echo '{"type":"hello","protocol":1}'
+echo "{\"type\":\"snapshot\",\"title\":\"$title\",\"rows\":[$rows]}"
