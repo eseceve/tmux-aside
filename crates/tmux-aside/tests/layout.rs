@@ -722,3 +722,29 @@ fn the_bar_between_comfortable_rows_takes_their_color_when_shared_and_is_muted_o
     assert_eq!(tone_between(Tone::Success), Tone::Success);
     assert_eq!(tone_between(Tone::Warning), Tone::Muted);
 }
+
+#[test]
+fn diff_stats_are_drawn_green_and_red_wherever_they_appear() {
+    let view = View::new(vec![Section {
+        header: false,
+        ..Section::new(
+            "Agents",
+            vec![Row {
+                lines: vec!["api · +120 -8 · main".to_string()],
+                ..Row::new("review")
+            }],
+            None,
+        )
+    }]);
+
+    let lines = lay(&view, 24, 2);
+
+    assert_eq!(lines[1].text(), pad("api · +120 -8 · main", "", 24));
+    let tones: Vec<(&str, Tone)> = lines[1]
+        .spans
+        .iter()
+        .filter(|span| span.text.starts_with(['+', '-']))
+        .map(|span| (span.text.as_str(), span.tone))
+        .collect();
+    assert_eq!(tones, [("+120", Tone::Success), ("-8", Tone::Danger)]);
+}

@@ -350,7 +350,7 @@ fn compose(indent: &str, row: &Row, width: usize, spinner_frame: usize) -> Vec<S
     let gap = usize::from(detail_width > 0);
     let text = truncate(&row.text, width.saturating_sub(used + detail_width + gap));
     let padding = width.saturating_sub(used + columns(&text) + detail_width);
-    spans.push(span(text, row.tone));
+    spans.extend(diff_colored(&text, row.tone));
     match row.meter {
         Some(percent) if padding >= MIN_METER + 2 => {
             let size = padding - 2;
@@ -363,6 +363,40 @@ fn compose(indent: &str, row: &Row, width: usize, spinner_frame: usize) -> Vec<S
         _ => spans.push(span(" ".repeat(padding), Tone::Plain)),
     }
     spans.push(span(detail.to_string(), row.detail_tone));
+    spans
+}
+
+/// `text` in `tone`, except `+N -M` diff stats, drawn with `+N` in success and `-M` in danger.
+fn diff_colored(text: &str, tone: Tone) -> Vec<Span> {
+    let words: Vec<&str> = text.split(' ').collect();
+    let is_count = |word: &str, sign: char| {
+        word.strip_prefix(sign)
+            .is_some_and(|digits| !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()))
+    };
+    let mut spans: Vec<Span> = Vec::new();
+    let mut plain = String::new();
+    let mut index = 0;
+    while index < words.len() {
+        if index + 1 < words.len() && is_count(words[index], '+') && is_count(words[index + 1], '-')
+        {
+            if !plain.is_empty() {
+                spans.push(span(std::mem::take(&mut plain), tone));
+            }
+            spans.push(span(words[index].to_string(), Tone::Success));
+            spans.push(span(" ".to_string(), tone));
+            spans.push(span(words[index + 1].to_string(), Tone::Danger));
+            index += 2;
+        } else {
+            plain.push_str(words[index]);
+            index += 1;
+        }
+        if index < words.len() {
+            plain.push(' ');
+        }
+    }
+    if !plain.is_empty() || spans.is_empty() {
+        spans.push(span(plain, tone));
+    }
     spans
 }
 

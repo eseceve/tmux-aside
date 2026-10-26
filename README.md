@@ -24,7 +24,7 @@ Claude
 Santiago                   10:32 AM
 ```
 
-Color is used only as a state signal, with the same meaning in every section:
+Color is used only as a state signal, with the same meaning in every section (diff stats such as `+120 -8` are always green and red):
 
 | Color | Meaning | Agents | Pull requests | Usage |
 |---|---|---|---|---|
@@ -163,6 +163,7 @@ Lists the pull requests matching a [GitHub search](https://docs.github.com/en/se
 - `--state-color number --state-color bar`: which parts take the state color.
 - `--merge-info`: unresolved review threads and approvals.
 - `--byline`: author and age.
+- `--diff`: lines the pull request adds and removes (`+120 -8`).
 - Keys on a row: `enter` opens the pull request, `c` copies its URL.
 
 ### usage
