@@ -175,6 +175,8 @@ Shows how much of the Claude and Codex plan limits you have used, with the time 
 
 The time in several zones: `args: ["America/Santiago=Santiago", "Europe/Madrid=Madrid"]`. Pair it with `title: ${today}` to show the date.
 
+- `--sort alphabetical|earliest|latest|given`: by label (the default), the zone where it is earliest or latest first, or in the order given.
+
 ### calendar (macOS)
 
 Upcoming events from the macOS Calendar. An event in progress shows `now–10:15`, one starting soon `in 8m–10:15`, and Enter joins its video call (Meet, Zoom, Teams, Webex or Whereby link). The first run asks for calendar access, granted to your terminal app.
