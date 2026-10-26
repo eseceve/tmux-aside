@@ -1,8 +1,10 @@
-use std::io::{BufRead, IsTerminal, Write};
+use std::fmt;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
+use inquire::{MultiSelect, Select, Text};
 
 use crate::hooks::{shell_quote, tmux_quote};
 use crate::plugin;
@@ -24,12 +26,12 @@ impl Action {
     /// Every action, in the order they are asked for and written.
     pub const ALL: [Action; 3] = [Action::Toggle, Action::Next, Action::Reload];
 
-    /// The key offered by default, as written after `bind-key`: `-n` binds it without the prefix.
-    pub fn default_key(self) -> &'static str {
+    /// The keys offered for the action, as written after `bind-key`. The first is the default.
+    pub fn candidates(self) -> &'static [&'static str] {
         match self {
-            Action::Toggle => "b",
-            Action::Next => "-n M-w",
-            Action::Reload => "R",
+            Action::Toggle => &["B", "S", "e"],
+            Action::Next => &["W", "N", "G"],
+            Action::Reload => &["R", "O", "Q"],
         }
     }
 
@@ -77,6 +79,12 @@ impl Ai {
         match self {
             Ai::Claude => &[("agents", "claude"), ("usage", "claude")],
         }
+    }
+}
+
+impl fmt::Display for Ai {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str(self.description())
     }
 }
 
@@ -153,20 +161,39 @@ pub fn merge_block(existing: &str, block: &str) -> String {
     merged
 }
 
-/// The keys bound inside the marked block of `content`, as written after `bind-key`.
-pub fn bound_keys(content: &str) -> Vec<String> {
+/// The bindings inside the marked block of `content`.
+pub fn block_bindings(content: &str) -> Vec<Binding> {
     content
         .lines()
         .skip_while(|line| line.trim() != BLOCK_START)
         .take_while(|line| line.trim() != BLOCK_END)
         .filter_map(|line| line.strip_prefix("bind-key "))
         .filter_map(|line| line.split_once(" run-shell "))
-        .map(|(key, _)| key.to_string())
+        .map(|(key, command)| Binding {
+            key: key.to_string(),
+            command: command
+                .trim()
+                .trim_matches('"')
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\"),
+        })
         .collect()
 }
 
-/// Asks for a key per action and the AI hooks to install, writes the bindings to the
-/// tmux config and applies them to the running server.
+/// How a person reads `key`, given as written after `bind-key`: `prefix + B`, `M-w (no prefix)`.
+pub fn describe_key(key: &str) -> String {
+    let arguments = key_arguments(key);
+    let name = arguments.last().copied().unwrap_or_default();
+    match table(&arguments) {
+        "prefix" => format!("prefix + {name}"),
+        "root" => format!("{name} (no prefix)"),
+        table => format!("{name} in {table}"),
+    }
+}
+
+/// Asks for a key per action and the AI hooks to install, then writes the bindings to the
+/// tmux config, applies them to the running server and installs the hooks. Nothing changes
+/// until every question is answered.
 pub fn run(options: Options) -> Result<()> {
     let interactive = !options.defaults && std::io::stdin().is_terminal();
     let live = std::env::var_os("TMUX").is_some();
@@ -180,55 +207,6 @@ pub fn run(options: Options) -> Result<()> {
                 .as_deref(),
         ),
     };
-
-    if interactive {
-        println!("Key bindings (Enter keeps the default, {UNBOUND} leaves the action unbound)");
-    }
-    let mut bindings = Vec::new();
-    for action in Action::ALL {
-        let Ok(program) = action.program() else {
-            println!(
-                "  {}: skipped, tmux-aside-agents not found",
-                action.description()
-            );
-            continue;
-        };
-        let given = options
-            .keys
-            .iter()
-            .find(|(given, _)| *given == action)
-            .map(|(_, key)| key.clone());
-        let key = match given {
-            Some(key) => key,
-            None if interactive => {
-                let key = ask(&format!(
-                    "  {} [{}]: ",
-                    action.description(),
-                    action.default_key()
-                ))?;
-                if key.is_empty() {
-                    action.default_key().to_string()
-                } else {
-                    key
-                }
-            }
-            None => action.default_key().to_string(),
-        };
-        if key == UNBOUND {
-            continue;
-        }
-        if live && let Some(existing) = current_binding(&key) {
-            println!("  {key} replaces: {existing}");
-        }
-        let program = program
-            .to_str()
-            .ok_or_else(|| anyhow!("executable path is not UTF-8"))?;
-        bindings.push(Binding {
-            key,
-            command: format!("{} {}", shell_quote(program), action.arguments()),
-        });
-    }
-
     let existing = match std::fs::read_to_string(&path) {
         Ok(content) => Some(content),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -236,6 +214,57 @@ pub fn run(options: Options) -> Result<()> {
             return Err(error).with_context(|| format!("failed to read {}", path.display()));
         }
     };
+    let previous = block_bindings(existing.as_deref().unwrap_or(""));
+
+    let mut bindings = Vec::new();
+    for action in Action::ALL {
+        let Ok(program) = action.program() else {
+            println!(
+                "{}: skipped, tmux-aside-agents not found",
+                action.description()
+            );
+            continue;
+        };
+        let program = program
+            .to_str()
+            .ok_or_else(|| anyhow!("executable path is not UTF-8"))?;
+        let command = format!("{} {}", shell_quote(program), action.arguments());
+        let given = options
+            .keys
+            .iter()
+            .find(|(given, _)| *given == action)
+            .map(|(_, key)| key.clone());
+        let current = previous
+            .iter()
+            .find(|binding| {
+                binding
+                    .command
+                    .ends_with(&format!(" {}", action.arguments()))
+            })
+            .map(|binding| binding.key.clone());
+        let key = match given {
+            Some(key) => key,
+            None if interactive => choose_key(action, current)?,
+            None => action.candidates()[0].to_string(),
+        };
+        if key == UNBOUND {
+            continue;
+        }
+        if !interactive && let KeyStatus::Used(existing) = key_status(&key) {
+            println!("{} replaces: {existing}", describe_key(&key));
+        }
+        bindings.push(Binding { key, command });
+    }
+
+    let ais = match options.ais {
+        Some(ais) => ais,
+        None if interactive => MultiSelect::new("AI hooks to install:", Ai::ALL.to_vec())
+            .with_all_selected_by_default()
+            .prompt()
+            .context("setup canceled; nothing was changed")?,
+        None => Ai::ALL.to_vec(),
+    };
+
     if live {
         for binding in &bindings {
             tmux::run(
@@ -247,11 +276,11 @@ pub fn run(options: Options) -> Result<()> {
                 .concat(),
             )?;
         }
-        for key in bound_keys(existing.as_deref().unwrap_or(""))
-            .into_iter()
-            .filter(|key| bindings.iter().all(|binding| &binding.key != key))
+        for binding in previous
+            .iter()
+            .filter(|old| bindings.iter().all(|binding| binding.key != old.key))
         {
-            let _ = tmux::run(&[&["unbind-key"], key_arguments(&key).as_slice()].concat());
+            let _ = tmux::run(&[&["unbind-key"], key_arguments(&binding.key).as_slice()].concat());
         }
     }
 
@@ -272,21 +301,6 @@ pub fn run(options: Options) -> Result<()> {
         path.display()
     );
 
-    let ais = match options.ais {
-        Some(ais) => ais,
-        None if interactive => {
-            println!("AI hooks");
-            let mut chosen = Vec::new();
-            for ai in Ai::ALL {
-                let answer = ask(&format!("  {} [Y/n]: ", ai.description()))?;
-                if !answer.to_lowercase().starts_with('n') {
-                    chosen.push(ai);
-                }
-            }
-            chosen
-        }
-        None => Ai::ALL.to_vec(),
-    };
     for ai in ais {
         for (plugin, argument) in ai.setups() {
             install_hooks(plugin, argument);
@@ -295,30 +309,127 @@ pub fn run(options: Options) -> Result<()> {
     Ok(())
 }
 
-fn ask(prompt: &str) -> Result<String> {
-    print!("{prompt}");
-    std::io::stdout().flush()?;
-    let mut answer = String::new();
-    std::io::stdin().lock().read_line(&mut answer)?;
-    Ok(answer.trim().to_string())
+enum KeyStatus {
+    Free,
+    Ours,
+    Used(String),
+    Unknown,
+}
+
+enum Choice {
+    Key { key: String, status: KeyStatus },
+    Other,
+    Unbound,
+}
+
+impl fmt::Display for Choice {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Choice::Key { key, status } => {
+                let status = match status {
+                    KeyStatus::Free => "free".to_string(),
+                    KeyStatus::Ours => "tmux-aside".to_string(),
+                    KeyStatus::Used(command) => format!("used: {command}"),
+                    KeyStatus::Unknown => String::new(),
+                };
+                write!(formatter, "{:<18}{status}", describe_key(key))
+            }
+            Choice::Other => formatter.write_str("Other key..."),
+            Choice::Unbound => formatter.write_str("Leave unbound"),
+        }
+    }
+}
+
+fn choose_key(action: Action, current: Option<String>) -> Result<String> {
+    let keys: Vec<String> = current
+        .iter()
+        .cloned()
+        .chain(
+            action
+                .candidates()
+                .iter()
+                .map(|key| key.to_string())
+                .filter(|key| Some(key) != current.as_ref()),
+        )
+        .collect();
+    let mut choices: Vec<Choice> = keys
+        .into_iter()
+        .map(|key| Choice::Key {
+            status: key_status(&key),
+            key,
+        })
+        .collect();
+    let start = if current.is_some() {
+        0
+    } else {
+        choices
+            .iter()
+            .position(|choice| {
+                matches!(
+                    choice,
+                    Choice::Key {
+                        status: KeyStatus::Free,
+                        ..
+                    }
+                )
+            })
+            .unwrap_or(0)
+    };
+    choices.extend([Choice::Other, Choice::Unbound]);
+    let choice = Select::new(&format!("{}:", action.description()), choices)
+        .with_starting_cursor(start)
+        .prompt()
+        .context("setup canceled; nothing was changed")?;
+    match choice {
+        Choice::Key { key, .. } => Ok(key),
+        Choice::Unbound => Ok(UNBOUND.to_string()),
+        Choice::Other => {
+            let key = Text::new("Key:")
+                .with_help_message(
+                    "as after bind-key: T for prefix + T, -n M-t for Alt+t without the prefix",
+                )
+                .prompt()
+                .context("setup canceled; nothing was changed")?;
+            Ok(key.trim().to_string())
+        }
+    }
 }
 
 fn key_arguments(key: &str) -> Vec<&str> {
     key.split_whitespace().collect()
 }
 
-fn current_binding(key: &str) -> Option<String> {
-    let arguments = key_arguments(key);
-    let table = if arguments.contains(&"-n") {
+fn table<'a>(arguments: &[&'a str]) -> &'a str {
+    if arguments.contains(&"-n") {
         "root"
     } else {
         arguments
             .windows(2)
             .find(|pair| pair[0] == "-T")
             .map_or("prefix", |pair| pair[1])
+    }
+}
+
+fn key_status(key: &str) -> KeyStatus {
+    let arguments = key_arguments(key);
+    let Some(name) = arguments.last() else {
+        return KeyStatus::Unknown;
     };
-    let existing = tmux::run(&["list-keys", "-T", table, arguments.last()?]).ok()?;
-    Some(existing).filter(|existing| !existing.is_empty() && !existing.contains("tmux-aside"))
+    match tmux::run(&["list-keys", "-T", table(&arguments), name]) {
+        Ok(line) if line.contains("tmux-aside") => KeyStatus::Ours,
+        Ok(line) if !line.is_empty() => {
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            let command = tokens
+                .iter()
+                .position(|token| *token == "-T")
+                .map(|index| tokens[(index + 3).min(tokens.len())..].join(" "))
+                .unwrap_or(line);
+            KeyStatus::Used(command)
+        }
+        Ok(_) => KeyStatus::Free,
+        Err(error) if error.to_string().contains("unknown key") => KeyStatus::Free,
+        Err(_) => KeyStatus::Unknown,
+    }
 }
 
 fn install_hooks(plugin: &str, argument: &str) {

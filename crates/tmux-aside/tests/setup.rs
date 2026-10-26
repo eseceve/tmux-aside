@@ -2,7 +2,9 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use tmux_aside::setup::{Binding, bound_keys, merge_block, render_block, tmux_config_path};
+use tmux_aside::setup::{
+    Binding, block_bindings, describe_key, merge_block, render_block, tmux_config_path,
+};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -115,7 +117,7 @@ fn writes_the_default_keys_to_a_new_config() {
         dir.read(),
         format!(
             "# >>> tmux-aside >>>\n\
-             bind-key b run-shell \"'{exe}' toggle\"\n\
+             bind-key B run-shell \"'{exe}' toggle\"\n\
              bind-key R run-shell \"'{exe}' reload\"\n\
              # <<< tmux-aside <<<\n"
         )
@@ -149,7 +151,7 @@ fn a_second_run_replaces_the_block_in_place() {
     let content = dir.read();
     assert_eq!(content.matches("# >>> tmux-aside >>>").count(), 1);
     assert!(content.contains("bind-key -n M-b run-shell"));
-    assert!(!content.contains("bind-key b run-shell"));
+    assert!(!content.contains("bind-key B run-shell"));
     assert!(content.ends_with("# <<< tmux-aside <<<\nset -g base-index 1\n"));
 }
 
@@ -183,13 +185,29 @@ fn commands_are_quoted_for_tmux() {
 }
 
 #[test]
-fn reads_the_keys_bound_in_the_block_only() {
+fn reads_the_bindings_in_the_block_only() {
     let content = format!(
         "bind-key x run-shell \"other\"\n{}",
-        render_block(&[binding("b", "toggle"), binding("-n M-w", "next")])
+        render_block(&[
+            binding("B", "'/a \"b\"/tmux-aside' toggle"),
+            binding("-n M-w", "next")
+        ])
     );
 
-    assert_eq!(bound_keys(&content), ["b", "-n M-w"]);
+    assert_eq!(
+        block_bindings(&content),
+        [
+            binding("B", "'/a \"b\"/tmux-aside' toggle"),
+            binding("-n M-w", "next")
+        ]
+    );
+}
+
+#[test]
+fn describes_keys_the_way_people_press_them() {
+    assert_eq!(describe_key("B"), "prefix + B");
+    assert_eq!(describe_key("-n M-w"), "M-w (no prefix)");
+    assert_eq!(describe_key("-T copy-mode-vi y"), "y in copy-mode-vi");
 }
 
 #[test]
@@ -221,13 +239,13 @@ fn inside_tmux_the_keys_take_effect_and_stale_ones_are_removed() {
     let dir = Dir::new();
     let server = Server::start();
     assert!(dir.run_setup(&[], Some(&server)).status.success());
-    assert!(server.binding("prefix", "b").contains("toggle"));
+    assert!(server.binding("prefix", "B").contains("toggle"));
 
     let output = dir.run_setup(&["--toggle", "-n M-b"], Some(&server));
 
     assert!(output.status.success());
     assert!(server.binding("root", "M-b").contains("toggle"));
-    assert!(server.binding("prefix", "b").is_empty());
+    assert!(server.binding("prefix", "B").is_empty());
     assert!(server.binding("prefix", "R").contains("reload"));
 }
 
@@ -242,6 +260,6 @@ fn a_key_tmux_rejects_changes_nothing() {
 
     assert!(!output.status.success());
     assert_eq!(dir.read(), before);
-    assert!(server.binding("prefix", "b").contains("toggle"));
+    assert!(server.binding("prefix", "B").contains("toggle"));
     assert!(server.binding("prefix", "R").contains("reload"));
 }

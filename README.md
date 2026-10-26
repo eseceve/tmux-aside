@@ -50,15 +50,15 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
    tmux-aside setup
    ```
 
-   It asks for a key per action, offering a default, and which AI hooks to install:
+   For each action it lists a few keys, marked free or with what they run today in your tmux, with the first free one selected; `Other key...` takes any key as written after `bind-key` (`-n M-t` binds Alt+t without the prefix). Then it asks which AI hooks to install. Nothing changes until every question is answered.
 
-   | Action | Default key |
+   | Action | Keys offered |
    |---|---|
-   | Toggle the sidebar | `prefix b` |
-   | Jump to the agent waiting the longest | `M-w`, without the prefix |
-   | Reload the config | `prefix R` |
+   | Toggle the sidebar | `prefix + B`, `S`, `e` |
+   | Jump to the agent waiting the longest | `prefix + W`, `N`, `G` |
+   | Reload the config | `prefix + R`, `O`, `Q` |
 
-   Keys are written as after `bind-key` (`-n M-w` binds without the prefix); `-` leaves an action unbound. The bindings go to a marked block in your tmux config, which a later run replaces, and take effect right away when run inside tmux. For Claude Code it runs `tmux-aside-agents setup claude` (status hooks) and `tmux-aside-usage setup claude` (wraps your `statusLine` to record plan usage), which keep a `settings.json.bak` copy and apply to sessions started afterwards. Pass `--yes` to take every default, or the keys as flags (`--toggle`, `--next`, `--reload`, `--hooks claude`, `--no-hooks`).
+   The bindings go to a marked block in your tmux config, which a later run replaces, and take effect right away when run inside tmux. For Claude Code it runs `tmux-aside-agents setup claude` (status hooks) and `tmux-aside-usage setup claude` (wraps your `statusLine` to record plan usage), which keep a `settings.json.bak` copy and apply to sessions started afterwards. Pass `--yes` to take the first key of each action and every hook, or give them as flags (`--toggle`, `--next`, `--reload`, `--hooks claude`, `--no-hooks`; `-` leaves an action unbound).
 3. Turn the sidebar on with your toggle key, or `tmux-aside on`.
 
 ## Commands
