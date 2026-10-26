@@ -244,7 +244,7 @@ fn rows_show_the_window_then_project_with_branch_and_the_pane_title() {
     let rows = rows(&result.agents, 0, flat(), &branch("main", None));
 
     assert_eq!(rows[0].text, "review");
-    assert_eq!(rows[0].lines, ["api · main", "CC · Estado de tareas y PRs"]);
+    assert_eq!(rows[0].lines, ["api · main", "CC: Estado de tareas y PRs"]);
     assert_eq!(rows[0].window.as_deref(), Some("@4"));
 }
 

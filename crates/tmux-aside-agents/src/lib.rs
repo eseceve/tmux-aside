@@ -398,7 +398,7 @@ fn row(agent: &AgentState, now: u64, elapsed: bool, grouped: bool, branch: Optio
     let title = Some(clean_title(&agent.title))
         .filter(|title| !title.is_empty() && *title != window && *title != group);
     let agent_line = match title {
-        Some(title) => format!("{} · {title}", agent_name(&agent.command)),
+        Some(title) => format!("{}: {title}", agent_name(&agent.command)),
         None => agent_name(&agent.command).to_string(),
     };
     let lines = [project_line, agent_line]
