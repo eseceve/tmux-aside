@@ -10,7 +10,7 @@ else printf %s \"$1\" | xclip -selection clipboard; fi";
 
 /// GraphQL query listing pull requests that match a GitHub search (`$q`), with the fields
 /// the rows show.
-pub const SEARCH_QUERY: &str = "query($q: String!, $limit: Int!) { search(query: $q, type: ISSUE, first: $limit) { nodes { ... on PullRequest { number title url isDraft additions deletions reviewDecision createdAt updatedAt author { login } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }";
+pub const SEARCH_QUERY: &str = "query($q: String!, $limit: Int!) { search(query: $q, type: ISSUE_ADVANCED, first: $limit) { nodes { ... on PullRequest { number title url isDraft additions deletions reviewDecision createdAt updatedAt author { login } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }";
 
 /// A pull request returned by the search.
 #[derive(Debug, Clone, PartialEq, Eq)]
