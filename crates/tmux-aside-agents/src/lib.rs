@@ -395,13 +395,16 @@ fn row(agent: &AgentState, now: u64, elapsed: bool, grouped: bool, branch: Optio
     .flatten()
     .collect::<Vec<_>>()
     .join(" · ");
-    let title = clean_title(&agent.title);
-    let mut lines: Vec<String> = Vec::new();
-    for line in [project_line.as_str(), title] {
-        if !line.is_empty() && line != window && !lines.iter().any(|kept| kept == line) {
-            lines.push(line.to_string());
-        }
-    }
+    let title = Some(clean_title(&agent.title))
+        .filter(|title| !title.is_empty() && *title != window && *title != group);
+    let agent_line = match title {
+        Some(title) => format!("{} · {title}", agent_name(&agent.command)),
+        None => agent_name(&agent.command).to_string(),
+    };
+    let lines = [project_line, agent_line]
+        .into_iter()
+        .filter(|line| !line.is_empty() && line != window)
+        .collect();
     let elapsed_time = || format_elapsed(now.saturating_sub(agent.status_ts));
     let pr = branch.and_then(|branch| branch.pr.as_ref());
     let (detail, detail_tone) = match (agent.status, pr) {
@@ -429,6 +432,15 @@ fn row(agent: &AgentState, now: u64, elapsed: bool, grouped: bool, branch: Optio
         }))
         .collect(),
         ..Row::new(agent.window.clone())
+    }
+}
+
+fn agent_name(command: &str) -> &str {
+    match command {
+        "claude" => "CC",
+        "codex" => "Codex",
+        "agy" => "Agy",
+        other => other,
     }
 }
 

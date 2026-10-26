@@ -244,12 +244,12 @@ fn rows_show_the_window_then_project_with_branch_and_the_pane_title() {
     let rows = rows(&result.agents, 0, flat(), &branch("main", None));
 
     assert_eq!(rows[0].text, "review");
-    assert_eq!(rows[0].lines, ["api · main", "Estado de tareas y PRs"]);
+    assert_eq!(rows[0].lines, ["api · main", "CC · Estado de tareas y PRs"]);
     assert_eq!(rows[0].window.as_deref(), Some("@4"));
 }
 
 #[test]
-fn rows_without_branch_or_title_show_only_the_project_line() {
+fn rows_without_branch_or_title_show_the_project_and_the_agent() {
     let rows = rows(
         &[state("%1", "api", "review", None, 0)],
         0,
@@ -257,7 +257,7 @@ fn rows_without_branch_or_title_show_only_the_project_line() {
         &HashMap::new(),
     );
 
-    assert_eq!(rows[0].lines, ["api"]);
+    assert_eq!(rows[0].lines, ["api", "CC"]);
 }
 
 #[test]
@@ -462,11 +462,11 @@ fn a_project_with_a_single_agent_still_gets_its_group_line() {
     )
     .remove(0);
     assert_eq!(row.group.as_deref(), Some("web"));
-    assert!(row.lines.is_empty());
+    assert_eq!(row.lines, ["CC"]);
 
     let row = rows(&[agent], 0, flat(), &HashMap::new()).remove(0);
     assert_eq!(row.group, None);
-    assert_eq!(row.lines, ["web"]);
+    assert_eq!(row.lines, ["web", "CC"]);
 }
 
 #[test]
@@ -499,7 +499,7 @@ fn lines_that_repeat_the_window_name_are_skipped() {
     );
 
     assert_eq!(rows[0].group.as_deref(), Some("api"));
-    assert!(rows[0].lines.is_empty(), "{:?}", rows[0].lines);
+    assert_eq!(rows[0].lines, ["CC"]);
 }
 
 #[test]
@@ -679,7 +679,7 @@ fn diff_stats_come_before_the_branch_so_a_long_branch_is_what_gets_cut() {
 
     let rows = rows(&[agent], 0, flat(), &branches);
 
-    assert_eq!(rows[0].lines, ["api · +12 -3 · feat/x"]);
+    assert_eq!(rows[0].lines, ["api · +12 -3 · feat/x", "CC"]);
 }
 
 #[test]
@@ -725,4 +725,23 @@ fn a_stop_with_background_agents_running_is_not_done() {
     assert!(!waits_for_background_agents(
         &json!({"hook_event_name": "Stop"})
     ));
+}
+
+#[test]
+fn rows_name_the_agent_tool_and_skip_a_title_that_repeats_the_project() {
+    let agents: Vec<AgentState> = [("%1", "codex"), ("%2", "agy"), ("%3", "aider")]
+        .into_iter()
+        .map(|(pane, command)| AgentState {
+            command: command.to_string(),
+            title: "api".to_string(),
+            ..state(pane, "api", "w", None, 0)
+        })
+        .collect();
+
+    let lines: Vec<Vec<String>> = rows(&agents, 0, flat(), &HashMap::new())
+        .into_iter()
+        .map(|row| row.lines)
+        .collect();
+
+    assert_eq!(lines, [["api", "Codex"], ["api", "Agy"], ["api", "aider"]]);
 }
