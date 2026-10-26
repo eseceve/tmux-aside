@@ -34,6 +34,8 @@ Color is used only as a state signal, with the same meaning in every section (di
 | success | done, ready | finished | approved and green | below 70% |
 | muted | idle | idle | waiting for review | |
 
+To see it with fake data, without touching your tmux, run `examples/demo/run.sh` and attach with the command it prints. It starts a separate tmux server whose sections cover every state.
+
 ## How it works
 
 - `tmux-aside on` adds a sidebar pane to every window and keeps it there through tmux hooks, also for windows created later.

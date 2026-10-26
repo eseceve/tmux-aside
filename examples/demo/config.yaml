@@ -1,0 +1,38 @@
+theme:
+  accent: "#be95ff"
+  warning: "#f1c21b"
+  success: "#42be65"
+  danger: "#fa4d56"
+  muted: "#7b7c7e"
+  selection: "#393939"
+  current: "#78a9ff"
+
+sections:
+  - plugin: @DEMO@/plugins/agents.sh
+    title: Agents
+    density: comfortable
+    interval: 10m
+  - plugin: @DEMO@/plugins/pull-requests.sh
+    title: Pull requests
+    density: comfortable
+    interval: 10m
+  - plugin: @DEMO@/plugins/reviews.sh
+    title: Review requested
+    density: comfortable
+    interval: 10m
+  - plugin: @DEMO@/plugins/calendar.sh
+    title: Calendar
+    counts: false
+    interval: 10m
+    pin: bottom
+  - plugin: @DEMO@/plugins/usage.sh
+    title: Usage
+    counts: false
+    interval: 10m
+    pin: bottom
+  - plugin: clock
+    title: ${today}
+    counts: false
+    interval: 1s
+    pin: bottom
+    args: ["--sort", "latest", "Asia/Tokyo=Tokyo", "Europe/Lisbon=Lisbon", "America/New_York=New York"]
