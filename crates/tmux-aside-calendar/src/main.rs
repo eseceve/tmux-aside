@@ -5,7 +5,7 @@ use anyhow::Result;
 use clap::Parser;
 use jiff::Zoned;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
-use tmux_aside_calendar::{Event, Options, rows};
+use tmux_aside_calendar::{Event, Options, rows, without_emoji};
 
 /// Sidebar section listing upcoming events from the macOS Calendar, which syncs Google,
 /// iCloud and Exchange accounts.
@@ -30,6 +30,9 @@ struct Cli {
     /// Also list events you declined
     #[arg(long)]
     declined: bool,
+    /// Remove emoji from titles, since terminals disagree on their width and misalign rows
+    #[arg(long)]
+    no_emoji: bool,
 }
 
 fn main() -> ExitCode {
@@ -46,7 +49,12 @@ fn run(cli: Cli) -> Result<()> {
     let now = Zoned::now();
     let start = now.start_of_day()?;
     let end = start.checked_add(jiff::Span::new().days(i64::from(cli.days)))?;
-    let events = eventkit::events(start.timestamp(), end.timestamp(), &cli.calendar)?;
+    let mut events = eventkit::events(start.timestamp(), end.timestamp(), &cli.calendar)?;
+    if cli.no_emoji {
+        for event in &mut events {
+            event.title = without_emoji(&event.title);
+        }
+    }
     let rows = rows(
         &events,
         now.timestamp(),

@@ -1,7 +1,7 @@
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use tmux_aside::protocol::Tone;
-use tmux_aside_calendar::{Event, Options, meeting_link, rows};
+use tmux_aside_calendar::{Event, Options, meeting_link, rows, without_emoji};
 
 const OPTIONS: Options = Options {
     soon: 15 * 60,
@@ -156,4 +156,12 @@ fn meeting_links_are_found_in_notes_or_location() {
         Some("https://us02web.zoom.us/j/123?pwd=x")
     );
     assert_eq!(meeting_link(["https://example.com"]), None);
+}
+
+#[test]
+fn emoji_can_be_removed_from_titles() {
+    assert_eq!(without_emoji("🔒 ✍ Deep focus"), "Deep focus");
+    assert_eq!(without_emoji("🛡\u{fe0f} 🍱 Lunch"), "Lunch");
+    assert_eq!(without_emoji("1:1 con Ana 👩‍💻"), "1:1 con Ana");
+    assert_eq!(without_emoji("Daily standup"), "Daily standup");
 }

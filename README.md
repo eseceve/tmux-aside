@@ -180,6 +180,7 @@ The time in several zones: `args: ["America/Santiago=Santiago", "Europe/Madrid=M
 Upcoming events from the macOS Calendar. An event in progress shows `now–10:15`, one starting soon `in 8m–10:15`, and Enter joins its video call (Meet, Zoom, Teams, Webex or Whereby link). The first run asks for calendar access, granted to your terminal app.
 
 - `--days 1 --limit 8 --soon 15m --calendar Work --all-day --declined`
+- `--no-emoji`: remove emoji from titles. Terminals and tmux disagree on the width of some emoji (such as ✍ or 🛡), which misaligns the times.
 
 ## Contributing
 

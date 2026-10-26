@@ -96,3 +96,28 @@ pub fn meeting_link<'a>(texts: impl IntoIterator<Item = &'a str>) -> Option<Stri
         })
         .map(str::to_string)
 }
+
+/// `title` without emoji, symbols drawn as emoji and the joiners and selectors between them,
+/// with the spaces they leave collapsed. Terminals and tmux disagree on how wide some emoji
+/// are, which misaligns the row.
+pub fn without_emoji(title: &str) -> String {
+    let is_emoji = |c: char| {
+        matches!(
+            u32::from(c),
+            0x2300..=0x23FF
+                | 0x2600..=0x27BF
+                | 0x2B00..=0x2BFF
+                | 0x1F000..=0x1FAFF
+                | 0x200D
+                | 0xFE00..=0xFE0F
+                | 0xE0020..=0xE007F
+        )
+    };
+    title
+        .chars()
+        .filter(|c| !is_emoji(*c))
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
