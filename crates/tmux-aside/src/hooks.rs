@@ -35,12 +35,13 @@ pub fn remove() {
 }
 
 fn run_shell(command: &str) -> String {
-    format!(
-        "run-shell -b \"{}\"",
-        command.replace('\\', "\\\\").replace('"', "\\\"")
-    )
+    format!("run-shell -b {}", tmux_quote(command))
 }
 
-fn shell_quote(value: &str) -> String {
+pub(crate) fn tmux_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+pub(crate) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }

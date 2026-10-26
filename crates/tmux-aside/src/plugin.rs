@@ -275,7 +275,7 @@ impl Supervisor {
     }
 }
 
-fn resolve(plugin: &str) -> Result<PathBuf> {
+pub(crate) fn resolve(plugin: &str) -> Result<PathBuf> {
     if plugin.contains('/') {
         return Ok(PathBuf::from(plugin));
     }

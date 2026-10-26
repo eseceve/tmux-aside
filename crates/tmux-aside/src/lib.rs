@@ -6,6 +6,7 @@ pub mod layout;
 pub mod plugin;
 pub mod protocol;
 pub mod render;
+pub mod setup;
 pub mod sidebar;
 pub mod title;
 pub mod tmux;

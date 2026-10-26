@@ -44,21 +44,22 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 ## Quick start
 
 1. Copy the [example config](examples/config.yaml) to `~/.config/tmux-aside/config.yaml` (or `$XDG_CONFIG_HOME/tmux-aside/config.yaml`) and edit it.
-2. Let Claude Code report its status and plan usage:
+2. Bind the keys and let your AI agents report their status:
 
    ```sh
-   tmux-aside-agents setup claude   # adds status hooks to ~/.claude/settings.json
-   tmux-aside-usage setup claude    # wraps your existing statusLine to record usage
+   tmux-aside setup
    ```
 
-   Both keep a `settings.json.bak` copy. The hooks apply to Claude Code sessions started afterwards.
-3. Turn the sidebar on, or bind a key in `~/.tmux.conf`:
+   It asks for a key per action, offering a default, and which AI hooks to install:
 
-   ```tmux
-   bind-key b run-shell "tmux-aside toggle"
-   # Jump to the agent that has been waiting the longest, from any pane
-   bind-key -n M-w run-shell "tmux-aside-agents next"
-   ```
+   | Action | Default key |
+   |---|---|
+   | Toggle the sidebar | `prefix b` |
+   | Jump to the agent waiting the longest | `M-w`, without the prefix |
+   | Reload the config | `prefix R` |
+
+   Keys are written as after `bind-key` (`-n M-w` binds without the prefix); `-` leaves an action unbound. The bindings go to a marked block in your tmux config, which a later run replaces, and take effect right away when run inside tmux. For Claude Code it runs `tmux-aside-agents setup claude` (status hooks) and `tmux-aside-usage setup claude` (wraps your `statusLine` to record plan usage), which keep a `settings.json.bak` copy and apply to sessions started afterwards. Pass `--yes` to take every default, or the keys as flags (`--toggle`, `--next`, `--reload`, `--hooks claude`, `--no-hooks`).
+3. Turn the sidebar on with your toggle key, or `tmux-aside on`.
 
 ## Commands
 
@@ -68,6 +69,7 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 | `tmux-aside off` | Remove it from every window. |
 | `tmux-aside toggle` | On if off, off if on. |
 | `tmux-aside reload` | Reread the config and restart the plugins. Sections whose config did not change keep their content. |
+| `tmux-aside setup` | Bind keys in your tmux config (`~/.tmux.conf`, or the XDG one when that is the one you have; `--config` to choose) and install AI hooks, asking for each. |
 
 ## Using the sidebar
 

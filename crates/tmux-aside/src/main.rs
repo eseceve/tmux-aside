@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use tmux_aside::setup::{self, Action, Ai};
 use tmux_aside::width::Width;
 use tmux_aside::{daemon, render, sidebar};
 
@@ -31,6 +32,30 @@ enum Command {
     },
     /// Reread the config and restart every plugin
     Reload,
+    /// Bind keys in the tmux config and install the AI hooks, asking for each
+    Setup {
+        /// tmux config to write [default: the one tmux reads, or ~/.tmux.conf]
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Key that toggles the sidebar, as written after bind-key ("-" leaves it unbound)
+        #[arg(long, allow_hyphen_values = true)]
+        toggle: Option<String>,
+        /// Key that jumps to the agent waiting the longest
+        #[arg(long, allow_hyphen_values = true)]
+        next: Option<String>,
+        /// Key that reloads the config
+        #[arg(long, allow_hyphen_values = true)]
+        reload: Option<String>,
+        /// AIs whose hooks to install
+        #[arg(long, value_delimiter = ',', conflicts_with = "no_hooks")]
+        hooks: Option<Vec<AiArg>>,
+        /// Install no AI hooks
+        #[arg(long)]
+        no_hooks: bool,
+        /// Take the default of everything not given, without asking
+        #[arg(long)]
+        yes: bool,
+    },
     #[command(name = "_sync", hide = true)]
     Sync {
         #[arg(long)]
@@ -59,12 +84,48 @@ enum Command {
     },
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum AiArg {
+    Claude,
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::On { width } => sidebar::on(width),
         Command::Off => sidebar::off(),
         Command::Toggle { width } => sidebar::toggle(width),
         Command::Reload => reload(),
+        Command::Setup {
+            config,
+            toggle,
+            next,
+            reload,
+            hooks,
+            no_hooks,
+            yes,
+        } => setup::run(setup::Options {
+            config,
+            keys: [
+                (Action::Toggle, toggle),
+                (Action::Next, next),
+                (Action::Reload, reload),
+            ]
+            .into_iter()
+            .filter_map(|(action, key)| key.map(|key| (action, key)))
+            .collect(),
+            ais: if no_hooks {
+                Some(vec![])
+            } else {
+                hooks.map(|ais| {
+                    ais.into_iter()
+                        .map(|ai| match ai {
+                            AiArg::Claude => Ai::Claude,
+                        })
+                        .collect()
+                })
+            },
+            defaults: yes,
+        }),
         Command::Sync { window } => sidebar::sync_window(&window),
         Command::Reap => sidebar::reap(),
         Command::Select { window, fallback } => sidebar::select(&window, &fallback),
