@@ -128,7 +128,7 @@ Run any plugin with `--help` for every option.
 
 ### agents
 
-Lists AI coding agents running in tmux panes. Claude Code reports its status through hooks (`tmux-aside-agents setup claude`); panes running `claude` or `codex` are listed even before a hook reports them, and other agents can be found by their command with `--detect`. Runs best with `mode: stream`.
+Lists AI coding agents running in tmux panes. Claude Code reports its status through hooks (`tmux-aside-agents setup claude`); panes running `claude`, `codex` or `agy` (Antigravity) are listed even before a hook reports them, and other agents can be found by their command with `--detect`. Runs best with `mode: stream`.
 
 - `--group project|none`: a group per project, or one list ordered by status across projects.
 - `--sort priority|alphabetical`: priority puts agents waiting for you first.

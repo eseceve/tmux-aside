@@ -20,7 +20,7 @@ const GITHUB_POLL: Duration = Duration::from_secs(30);
 const DIFF_POLL: Duration = Duration::from_secs(5);
 const ACTIVE_FOR: u64 = 3;
 const NOTIFICATION_MS: &str = "5000";
-const SUPPORTED_AGENTS: [&str; 2] = ["claude", "codex"];
+const SUPPORTED_AGENTS: [&str; 3] = ["claude", "codex", "agy"];
 const LIVE_PANE_FORMAT: &str = "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_active}\t#{window_active}\t#{session_attached}\t#{pane_current_path}\t#{window_id}\t#{host}\t#{window_name}\t#{pane_title}";
 
 /// Sidebar section listing AI agents running in tmux panes, and the hook commands that
@@ -45,9 +45,9 @@ struct Cli {
     /// Mark a working agent as stalled when its pane has not changed for DURATION (e.g. 60s)
     #[arg(long, value_name = "DURATION", value_parser = tmux_aside::config::parse_duration)]
     stall_after: Option<Duration>,
-    /// Also list panes running COMMAND (e.g. aider) as agents; claude and codex are always
-    /// listed. Until a hook reports their status, they are working while their pane changes and
-    /// done when it stops
+    /// Also list panes running COMMAND (e.g. aider) as agents; claude, codex and agy
+    /// (Antigravity) are always listed. Until a hook reports their status, they are working while
+    /// their pane changes and done when it stops
     #[arg(long, value_name = "COMMAND")]
     detect: Vec<String>,
     /// Notify when an agent enters STATUS, unless its pane is the one being viewed
