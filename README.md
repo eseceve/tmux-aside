@@ -1,28 +1,8 @@
 # tmux-aside
 
+<img src="docs/images/sidebar.png" alt="The sidebar with agents, pull requests, calendar, usage and clocks" width="292" align="right">
+
 A sidebar for tmux, shown in every window, built from pluggable sections. It is made for working with several AI coding agents at once: one glance tells you which agent is working, which one is waiting for you and how your pull requests are doing, without leaving the terminal.
-
-```
-──────────── Agents · 3 ─────────────
-▌ api-refactor                    ⠸      <- working
-▌ api · +120 -8 · feat/split-auth
-▌ Split the auth middleware
-▌
-▌ docs                           2:14     <- waiting for you for 2m14s
-▌ web · fix/typos
-
-───────── Pull requests · 2 ─────────
-web                               2
-▌ fix(nav): keep the menu o… #1340      <- checks running
-▌ feat(cart): show totals    #1338      <- approved, checks green
-
-─────────────── Usage ───────────────
-Claude
-  5 hours ━━━────────── 22% · 3h16m
-  Weekly  ━━━━━━━━━────  68% · 1d0h
-───────── Monday, October 26 ────────
-Santiago                   10:32 AM
-```
 
 Color is used only as a state signal, with the same meaning in every section (diff stats such as `+120 -8` are always green and red):
 
