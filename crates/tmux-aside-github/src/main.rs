@@ -29,6 +29,9 @@ struct Cli {
     /// Add a line with each pull request's unresolved review threads and approvals
     #[arg(long)]
     merge_info: bool,
+    /// Show the lines each pull request adds and removes, as +N -M
+    #[arg(long)]
+    diff: bool,
 }
 
 fn main() -> ExitCode {
@@ -61,6 +64,7 @@ fn run(cli: Cli) -> Result<()> {
             colored: cli.state_color,
             byline_at: cli.byline.then(Timestamp::now),
             merge_info: cli.merge_info,
+            diff: cli.diff,
         },
     );
     print(&PluginMessage::Hello {

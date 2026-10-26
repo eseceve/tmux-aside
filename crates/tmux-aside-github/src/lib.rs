@@ -10,7 +10,7 @@ else printf %s \"$1\" | xclip -selection clipboard; fi";
 
 /// GraphQL query listing pull requests that match a GitHub search (`$q`), with the fields
 /// the rows show.
-pub const SEARCH_QUERY: &str = "query($q: String!, $limit: Int!) { search(query: $q, type: ISSUE, first: $limit) { nodes { ... on PullRequest { number title url isDraft reviewDecision createdAt updatedAt author { login } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }";
+pub const SEARCH_QUERY: &str = "query($q: String!, $limit: Int!) { search(query: $q, type: ISSUE, first: $limit) { nodes { ... on PullRequest { number title url isDraft additions deletions reviewDecision createdAt updatedAt author { login } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }";
 
 /// A pull request returned by the search.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +33,9 @@ pub struct PullRequest {
     pub required_approvals: Option<u32>,
     pub created_at: String,
     pub updated_at: String,
+    /// Lines added and removed.
+    pub additions: u64,
+    pub deletions: u64,
 }
 
 /// Parses the response of [`SEARCH_QUERY`], skipping results that are not pull requests.
@@ -126,6 +129,8 @@ pub struct RowOptions {
     pub byline_at: Option<Timestamp>,
     /// Add a line with the unresolved review threads and the approvals.
     pub merge_info: bool,
+    /// Start the first extra line with the lines added and removed, as `+N -M`.
+    pub diff: bool,
 }
 
 /// One row per pull request, grouped by repository (alphabetical) with the most recently
@@ -140,14 +145,24 @@ pub fn rows(pull_requests: &[PullRequest], options: &RowOptions) -> Vec<Row> {
     });
     sorted
         .into_iter()
-        .map(|pr| Row {
-            lines: options
+        .map(|pr| {
+            let mut lines: Vec<String> = options
                 .byline_at
                 .map(|now| byline(pr, now))
                 .into_iter()
                 .chain(options.merge_info.then(|| merge_info(pr)))
-                .collect(),
-            ..row(pr, &options.colored)
+                .collect();
+            if options.diff {
+                let diff = format!("+{} -{}", pr.additions, pr.deletions);
+                match lines.first_mut() {
+                    Some(first) => *first = format!("{diff} · {first}"),
+                    None => lines.push(diff),
+                }
+            }
+            Row {
+                lines,
+                ..row(pr, &options.colored)
+            }
         })
         .collect()
 }
@@ -220,6 +235,10 @@ struct Node {
     title: String,
     url: String,
     is_draft: bool,
+    #[serde(default)]
+    additions: u64,
+    #[serde(default)]
+    deletions: u64,
     review_decision: Option<String>,
     created_at: String,
     updated_at: String,
@@ -313,6 +332,8 @@ impl Node {
             title: self.title,
             url: self.url,
             draft: self.is_draft,
+            additions: self.additions,
+            deletions: self.deletions,
             review: self.review_decision,
             checks,
             author: self

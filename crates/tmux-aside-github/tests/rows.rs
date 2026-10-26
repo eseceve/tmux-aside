@@ -19,7 +19,7 @@ fn node(repo: &str, number: u64, draft: bool, review: &str, checks: &str, update
     };
     format!(
         r#"{{"number": {number}, "title": "Title {number}", "url": "https://github.com/org/{repo}/pull/{number}",
-            "isDraft": {draft}, "reviewDecision": {review}, "createdAt": "2026-10-18T10:00:00Z",
+            "isDraft": {draft}, "additions": 120, "deletions": 8, "reviewDecision": {review}, "createdAt": "2026-10-18T10:00:00Z",
             "author": {{"login": "dev"}}, "updatedAt": "{updated}", "mergeable": "MERGEABLE",
             "reviewThreads": {{"nodes": [{{"isResolved": false}}, {{"isResolved": true}}]}},
             "latestOpinionatedReviews": {{"nodes": [{{"state": "APPROVED"}}, {{"state": "COMMENTED"}}]}},
@@ -314,4 +314,26 @@ fn c_copies_the_pull_request_url() {
         Some("https://github.com/org/api/pull/1")
     );
     assert!(copy.label.is_some());
+}
+
+#[test]
+fn diff_stats_start_the_first_extra_line_or_stand_alone() {
+    let pr = pull_request(false, "", "");
+    let lines = |options: RowOptions| rows(std::slice::from_ref(&pr), &options).remove(0).lines;
+
+    assert_eq!(
+        lines(RowOptions {
+            diff: true,
+            ..Default::default()
+        }),
+        ["+120 -8"]
+    );
+    assert_eq!(
+        lines(RowOptions {
+            diff: true,
+            merge_info: true,
+            ..Default::default()
+        }),
+        ["+120 -8 · 1 unresolved · 1/2 approvals"]
+    );
 }
