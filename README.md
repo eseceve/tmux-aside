@@ -126,13 +126,13 @@ Run any plugin with `--help` for every option.
 
 ### agents
 
-Lists AI coding agents running in tmux panes. Claude Code reports its status through hooks (`tmux-aside-agents setup claude`); other agents can be found by their command with `--detect`. Runs best with `mode: stream`.
+Lists AI coding agents running in tmux panes. Claude Code reports its status through hooks (`tmux-aside-agents setup claude`); panes running `claude` or `codex` are listed even before a hook reports them, and other agents can be found by their command with `--detect`. Runs best with `mode: stream`.
 
 - `--group project|none`: a group per project, or one list ordered by status across projects.
 - `--sort priority|alphabetical`: priority puts agents waiting for you first.
 - `--diff`: lines the agent's branch adds and removes (`+12 -3`), committed or not.
 - `--stall-after 60s`: mark a working agent whose pane stopped changing (for example, after you interrupt it).
-- `--detect codex`: list panes running `codex` as agents, working while their pane changes.
+- `--detect aider`: also list panes running `aider` as agents, working while their pane changes.
 - `--notify waiting --notify done --notify-via tmux --notify-via desktop`: notify when an agent needs you, unless you are looking at it.
 - `tmux-aside-agents next [--status waiting]`: switch to the agent waiting the longest; call it again to cycle.
 - Keys on a row: `enter` jumps to the agent, `p` opens its pull request.
