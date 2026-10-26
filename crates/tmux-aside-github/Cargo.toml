@@ -1,0 +1,15 @@
+[package]
+name = "tmux-aside-github"
+description = "tmux-aside section listing GitHub pull requests and their state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+jiff = "0.2.38"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tmux-aside = { version = "0.1.0", path = "../tmux-aside" }
