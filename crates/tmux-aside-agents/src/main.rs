@@ -83,6 +83,8 @@ enum Command {
 enum SetupAgent {
     /// Merge the hooks into Claude Code's settings.json ($CLAUDE_CONFIG_DIR or ~/.claude)
     Claude,
+    /// Merge the hooks into Codex's hooks.json ($CODEX_HOME or ~/.codex)
+    Codex,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -133,9 +135,7 @@ fn main() -> ExitCode {
         Some(Command::SetStatus { status }) => hook(|| set_status(status)),
         Some(Command::Register) => hook(register),
         Some(Command::Next { status }) => jump(&statuses(status)),
-        Some(Command::Setup {
-            agent: SetupAgent::Claude,
-        }) => setup_claude(),
+        Some(Command::Setup { agent }) => setup(agent),
         None => run_plugin(
             RowOptions {
                 sort: match cli.sort {
@@ -726,7 +726,9 @@ fn now() -> u64 {
         .unwrap_or_default()
 }
 
-const CLAUDE_HOOKS: [(&str, Option<&str>, &str); 6] = [
+type Hook = (&'static str, Option<&'static str>, &'static str);
+
+const CLAUDE_HOOKS: [Hook; 6] = [
     (
         "SessionStart",
         Some("startup|resume|clear|fork"),
@@ -743,14 +745,44 @@ const CLAUDE_HOOKS: [(&str, Option<&str>, &str); 6] = [
     ("Stop", None, "set-status done"),
 ];
 
-fn setup_claude() -> Result<()> {
-    let dir = match std::env::var_os("CLAUDE_CONFIG_DIR").filter(|dir| !dir.is_empty()) {
+const CODEX_HOOKS: [Hook; 5] = [
+    (
+        "SessionStart",
+        Some("startup|resume|clear|fork"),
+        "register",
+    ),
+    ("UserPromptSubmit", None, "set-status working"),
+    ("PermissionRequest", None, "set-status waiting"),
+    ("PostToolUse", None, "set-status working"),
+    ("Stop", None, "set-status done"),
+];
+
+fn setup(agent: SetupAgent) -> Result<()> {
+    let (env, default_dir, file, hooks, name, note) = match agent {
+        SetupAgent::Claude => (
+            "CLAUDE_CONFIG_DIR",
+            ".claude",
+            "settings.json",
+            &CLAUDE_HOOKS[..],
+            "Claude Code",
+            "They take effect in new Claude Code sessions.",
+        ),
+        SetupAgent::Codex => (
+            "CODEX_HOME",
+            ".codex",
+            "hooks.json",
+            &CODEX_HOOKS[..],
+            "Codex",
+            "Codex skips them until you trust them: run /hooks in a new Codex session.",
+        ),
+    };
+    let dir = match std::env::var_os(env).filter(|dir| !dir.is_empty()) {
         Some(dir) => PathBuf::from(dir),
         None => std::env::home_dir()
             .ok_or_else(|| anyhow!("cannot locate the home directory"))?
-            .join(".claude"),
+            .join(default_dir),
     };
-    let path = dir.join("settings.json");
+    let path = dir.join(file);
     let existing = match std::fs::read_to_string(&path) {
         Ok(content) => Some(content),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -768,7 +800,12 @@ fn setup_claude() -> Result<()> {
     let exe = exe
         .to_str()
         .ok_or_else(|| anyhow!("executable path is not UTF-8"))?;
-    merge_claude_hooks(&mut settings, &format!("'{}'", exe.replace('\'', "'\\''")))?;
+    merge_hooks(
+        &mut settings,
+        file,
+        hooks,
+        &format!("'{}'", exe.replace('\'', "'\\''")),
+    )?;
 
     std::fs::create_dir_all(&dir)?;
     if let Some(content) = &existing {
@@ -778,26 +815,26 @@ fn setup_claude() -> Result<()> {
         &path,
         format!("{}\n", serde_json::to_string_pretty(&settings)?),
     )?;
-    println!("Claude Code hooks installed in {}", path.display());
-    println!("They take effect in new Claude Code sessions.");
+    println!("{name} hooks installed in {}", path.display());
+    println!("{note}");
     Ok(())
 }
 
-fn merge_claude_hooks(settings: &mut Value, exe: &str) -> Result<()> {
+fn merge_hooks(settings: &mut Value, file: &str, wanted: &[Hook], exe: &str) -> Result<()> {
     let hooks = settings
         .as_object_mut()
-        .ok_or_else(|| anyhow!("settings.json must contain a JSON object"))?
+        .ok_or_else(|| anyhow!("{file} must contain a JSON object"))?
         .entry("hooks")
         .or_insert_with(|| json!({}))
         .as_object_mut()
-        .ok_or_else(|| anyhow!("\"hooks\" in settings.json must be an object"))?;
-    for (event, matcher, arguments) in CLAUDE_HOOKS {
+        .ok_or_else(|| anyhow!("\"hooks\" in {file} must be an object"))?;
+    for &(event, matcher, arguments) in wanted {
         let command = format!("{exe} {arguments}");
         let entries = hooks
             .entry(event)
             .or_insert_with(|| json!([]))
             .as_array_mut()
-            .ok_or_else(|| anyhow!("hooks.{event} in settings.json must be an array"))?;
+            .ok_or_else(|| anyhow!("hooks.{event} in {file} must be an array"))?;
         let mut found = false;
         for hook in entries
             .iter_mut()

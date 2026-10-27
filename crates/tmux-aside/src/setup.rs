@@ -63,21 +63,24 @@ impl Action {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ai {
     Claude,
+    Codex,
 }
 
 impl Ai {
     /// Every AI with hooks support, in the order they are offered.
-    pub const ALL: [Ai; 1] = [Ai::Claude];
+    pub const ALL: [Ai; 2] = [Ai::Claude, Ai::Codex];
 
     fn description(self) -> &'static str {
         match self {
             Ai::Claude => "Claude Code: agent status and plan usage",
+            Ai::Codex => "Codex: agent status",
         }
     }
 
     fn setups(self) -> &'static [(&'static str, &'static str)] {
         match self {
             Ai::Claude => &[("agents", "claude"), ("usage", "claude")],
+            Ai::Codex => &[("agents", "codex")],
         }
     }
 }

@@ -87,6 +87,7 @@ enum Command {
 #[derive(Clone, Copy, ValueEnum)]
 enum AiArg {
     Claude,
+    Codex,
 }
 
 fn main() -> Result<()> {
@@ -120,6 +121,7 @@ fn main() -> Result<()> {
                     ais.into_iter()
                         .map(|ai| match ai {
                             AiArg::Claude => Ai::Claude,
+                            AiArg::Codex => Ai::Codex,
                         })
                         .collect()
                 })
