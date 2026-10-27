@@ -2,6 +2,7 @@ pub mod config;
 pub mod daemon;
 pub mod folds;
 pub mod hooks;
+pub mod i18n;
 pub mod layout;
 pub mod plugin;
 pub mod protocol;

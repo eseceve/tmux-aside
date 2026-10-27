@@ -342,3 +342,29 @@ fn auto_reload_picks_up_config_changes_without_a_refresh() {
 
     client.view_where("auto reloaded", |view| view.sections[0].title == "After");
 }
+
+#[test]
+fn plugins_receive_the_configured_language() {
+    let daemon = Daemon::with_config(&format!(
+        "language: es\n{}",
+        config(&[section(&fixture("language"), &[], "    interval: 1s\n")])
+    ));
+
+    let view = daemon
+        .connect()
+        .view_where("snapshot", |view| first_row(view) != "cargando...");
+
+    assert_eq!(first_row(&view), "es");
+}
+
+#[test]
+fn sections_wait_in_the_configured_language() {
+    let daemon = Daemon::with_config(&format!(
+        "language: es\n{}",
+        config(&[section(&fixture("hang"), &["5"], "    interval: 1s\n")])
+    ));
+
+    let view = daemon.connect().next_view();
+
+    assert_eq!(row_texts(&view), ["cargando..."]);
+}

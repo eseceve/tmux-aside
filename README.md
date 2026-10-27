@@ -97,6 +97,7 @@ theme:                 # colors: names (green, darkgray) or #rrggbb
   current: "#78a9ff"   # text of the rows that belong to the window you are in
 auto_reload: false     # reload when this file changes, without tmux-aside reload
 enter: focus           # focus: Enter jumps to the row; select: Enter shows the row's window and keeps the focus in the sidebar
+language: es           # en or es; your locale's ($LC_ALL, $LC_MESSAGES, $LANG) when unset, else English
 sections:
   - plugin: agents     # plugin name, or a path to an executable
     args: ["--group", "none"]
@@ -111,7 +112,7 @@ Each section accepts:
 | `mode` | `interval` | `interval` runs the plugin every `interval`; `stream` keeps it running and reads every snapshot it prints. |
 | `interval` | `30s` | How often an interval plugin runs (`ms`, `s` or `m`). |
 | `timeout` | `10s` | How long a run may take. For stream plugins it only bounds the wait for the first line. |
-| `title` | the plugin's | Section title. `${today}` expands to the date ("Monday, October 26"), `${today:es}` to the date in Spanish. |
+| `title` | the plugin's | Section title, shown as written. `${today}` expands to the date in the sidebar's language ("Monday, October 26", "Lunes 26 de Octubre"); `${today:en}` and `${today:es}` pick the language. |
 | `header` | `true` | Draw the title line. |
 | `counts` | `true` | Show how many rows the section and each group have. |
 | `collapsed` | `false` | Start folded, unless you unfolded it before. |

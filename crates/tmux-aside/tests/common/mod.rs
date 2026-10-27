@@ -85,6 +85,7 @@ impl TmuxServer {
         let output = Command::new(env!("CARGO_BIN_EXE_tmux-aside"))
             .env("TMUX", format!("{},0,0", self.socket_path))
             .env_remove("TMUX_PANE")
+            .env("TMUX_ASIDE_LANG", "en")
             .envs(self.home.envs())
             .args(args)
             .output()

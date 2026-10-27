@@ -4,6 +4,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
+use crate::i18n::Language;
 pub use crate::view::{Density, Pin, Theme};
 
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(30);
@@ -63,6 +64,8 @@ pub struct Config {
     /// Reload the config whenever the file changes, without `tmux-aside reload`.
     pub auto_reload: bool,
     pub enter: EnterAction,
+    /// Language of the sidebar and the bundled plugins; the locale's when unset.
+    pub language: Option<Language>,
 }
 
 #[derive(Deserialize)]
@@ -75,6 +78,7 @@ struct RawConfig {
     auto_reload: bool,
     #[serde(default)]
     enter: EnterAction,
+    language: Option<Language>,
 }
 
 #[derive(Deserialize, Default)]
@@ -133,13 +137,14 @@ pub fn load(path: &Path) -> Result<Option<Config>> {
 pub fn parse(yaml: &str) -> Result<Config> {
     let raw: Option<RawConfig> =
         serde_saphyr::from_str(yaml).map_err(|error| anyhow!("{error}"))?;
-    let (raw_sections, raw_theme, auto_reload, enter) = raw
+    let (raw_sections, raw_theme, auto_reload, enter, language) = raw
         .map(|raw| {
             (
                 raw.sections,
                 raw.theme.unwrap_or_default(),
                 raw.auto_reload,
                 raw.enter,
+                raw.language,
             )
         })
         .unwrap_or_default();
@@ -178,6 +183,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
         theme,
         auto_reload,
         enter,
+        language,
     })
 }
 

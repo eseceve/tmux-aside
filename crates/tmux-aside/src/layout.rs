@@ -101,16 +101,6 @@ pub fn layout(view: &View, options: &LayoutOptions) -> Vec<LayoutLine> {
     lines
 }
 
-/// Keys of the sidebar itself, as listed by its help.
-const KEYS: [(&str, &str); 6] = [
-    ("j k", "move"),
-    ("h l", "fold, unfold"),
-    ("space", "fold or unfold"),
-    ("enter", "run or show the row"),
-    ("o", "run the row's action"),
-    ("?", "close this help"),
-];
-
 /// The help shown over the sidebar: the sidebar's own keys, then the actions of the selected
 /// row with their labels.
 pub fn help(view: &View, width: usize) -> Vec<LayoutLine> {
@@ -127,8 +117,17 @@ pub fn help(view: &View, width: usize) -> Vec<LayoutLine> {
         row.detail_tone = Tone::Plain;
         line(LineKind::Row, false, compose("", &row, width, 0))
     };
-    let mut lines = vec![title_line("Keys")];
-    lines.extend(KEYS.iter().map(|(key, label)| entry(key, label)));
+    let messages = view.language.messages();
+    let keys = [
+        ("j k", messages.move_selection),
+        ("h l", messages.fold_unfold),
+        ("space", messages.fold_or_unfold),
+        ("enter", messages.run_or_show),
+        ("o", messages.run_action),
+        ("?", messages.close_help),
+    ];
+    let mut lines = vec![title_line(messages.keys)];
+    lines.extend(keys.iter().map(|(key, label)| entry(key, label)));
     let actions: Vec<_> = view
         .selected_row()
         .map(|row| {
@@ -140,7 +139,7 @@ pub fn help(view: &View, width: usize) -> Vec<LayoutLine> {
         .unwrap_or_default();
     if !actions.is_empty() {
         lines.push(plain(LineKind::Blank, " ".repeat(width)));
-        lines.push(title_line("This row"));
+        lines.push(title_line(messages.this_row));
         lines.extend(
             actions
                 .iter()

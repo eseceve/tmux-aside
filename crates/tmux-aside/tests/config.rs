@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use tmux_aside::config::{Config, EnterAction, Mode, Pin, Theme, parse, parse_duration};
+use tmux_aside::i18n::Language;
 
 #[test]
 fn parses_a_full_section() {
@@ -53,9 +54,22 @@ fn an_empty_file_has_no_sections() {
             sections: vec![],
             theme: Theme::default(),
             auto_reload: false,
-            enter: EnterAction::Focus
+            enter: EnterAction::Focus,
+            language: None,
         }
     );
+}
+
+#[test]
+fn parses_the_language() {
+    let config = parse("language: es\n").unwrap();
+
+    assert_eq!(config.language, Some(Language::Es));
+}
+
+#[test]
+fn unsupported_languages_are_rejected() {
+    assert!(parse("language: klingon\n").is_err());
 }
 
 #[test]

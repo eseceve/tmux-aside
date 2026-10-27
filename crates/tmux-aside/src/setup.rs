@@ -7,6 +7,7 @@ use anyhow::{Context, Result, anyhow};
 use inquire::{MultiSelect, Select, Text};
 
 use crate::hooks::{shell_quote, tmux_quote};
+use crate::i18n::Language;
 use crate::plugin;
 use crate::tmux;
 
@@ -46,7 +47,7 @@ impl Action {
     fn program(self) -> Result<PathBuf> {
         match self {
             Action::Toggle | Action::Reload => Ok(std::env::current_exe()?),
-            Action::Next => plugin::resolve("agents"),
+            Action::Next => plugin::resolve("agents", Language::En),
         }
     }
 
@@ -459,7 +460,7 @@ fn key_status(key: &str) -> KeyStatus {
 }
 
 fn install_hooks(plugin: &str, argument: &str) {
-    let Ok(program) = plugin::resolve(plugin) else {
+    let Ok(program) = plugin::resolve(plugin, Language::En) else {
         eprintln!("tmux-aside-{plugin} not found; skipped its {argument} hooks");
         return;
     };

@@ -2,6 +2,7 @@ use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::Language;
 use crate::protocol::{Action, Row, Tone};
 
 /// Selectable line of a section.
@@ -173,6 +174,8 @@ pub struct View {
     pub selected: Option<Cursor>,
     #[serde(default)]
     pub theme: Theme,
+    #[serde(default)]
+    pub language: Language,
 }
 
 impl View {
@@ -182,6 +185,7 @@ impl View {
             sections,
             selected: None,
             theme: Theme::default(),
+            language: Language::default(),
         };
         view.selected = view.lines().into_iter().next();
         view

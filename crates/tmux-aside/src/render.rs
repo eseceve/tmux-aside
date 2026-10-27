@@ -17,6 +17,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use crate::i18n::Language;
 use crate::layout::{LayoutLine, LayoutOptions, LineKind, has_spinner, help, layout};
 use crate::protocol::{ClientMessage, DaemonMessage, Tone};
 use crate::view::{Cursor, Key, Theme, View};
@@ -43,6 +44,7 @@ pub fn run(socket: Option<PathBuf>) -> Result<()> {
         Some(socket) => socket,
         None => daemon::default_socket()?,
     };
+    let connecting = Language::detect().messages().connecting;
     let (events, inbox) = mpsc::channel();
     let writer: Writer = Arc::new(Mutex::new(None));
     {
@@ -93,7 +95,7 @@ pub fn run(socket: Option<PathBuf>) -> Result<()> {
                         })
                         .map(|line| styled(line, &view.theme))
                         .collect(),
-                    None => vec![Line::from("connecting...")],
+                    None => vec![Line::from(connecting)],
                 };
                 frame.render_widget(Paragraph::new(lines), area);
             })?;

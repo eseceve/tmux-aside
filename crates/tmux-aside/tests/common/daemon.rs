@@ -109,6 +109,7 @@ pub fn daemon_command(home: &Home, socket: &Path) -> Command {
         .args(["_daemon", "--socket"])
         .arg(socket)
         .env_remove("TMUX")
+        .env("TMUX_ASIDE_LANG", "en")
         .envs(home.envs())
         .stdin(Stdio::null())
         .stdout(Stdio::null())

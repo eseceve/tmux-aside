@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::config::{Mode, SectionConfig};
+use crate::i18n::{LANGUAGE_VAR, Language};
 use crate::protocol::{PLUGIN_PROTOCOL, PluginMessage, Row};
 use crate::title;
 
@@ -42,6 +43,7 @@ pub fn spawn(
     index: usize,
     section: SectionConfig,
     log: PathBuf,
+    language: Language,
     stop: Arc<AtomicBool>,
     publish: impl Fn(Update) + Send + 'static,
 ) -> JoinHandle<()> {
@@ -51,6 +53,7 @@ pub fn spawn(
             name: display_name(&section.plugin),
             section,
             log,
+            language,
             stop,
         };
         match supervisor.section.mode {
@@ -65,6 +68,7 @@ struct Supervisor {
     name: String,
     section: SectionConfig,
     log: PathBuf,
+    language: Language,
     stop: Arc<AtomicBool>,
 }
 
@@ -126,13 +130,13 @@ impl Supervisor {
             match lines_rx.recv_timeout(POLL) {
                 Ok(line) if line.trim().is_empty() => {}
                 Ok(line) if !greeted => {
-                    if let Err(error) = expect_hello(Some(&line)) {
+                    if let Err(error) = expect_hello(Some(&line), self.language) {
                         kill_group(&mut child);
                         return Ok(error);
                     }
                     greeted = true;
                 }
-                Ok(line) => match parse_message(&line) {
+                Ok(line) => match parse_message(&line, self.language) {
                     Ok(PluginMessage::Snapshot { title, rows }) => {
                         publish(self.update(title, rows))
                     }
@@ -143,23 +147,18 @@ impl Supervisor {
                     if self.stopped() {
                         drop(child.stdin.take());
                         kill_group(&mut child);
-                        return Ok(anyhow!("stopped"));
+                        return Ok(anyhow!(self.language.messages().stopped));
                     }
                     if !greeted && Instant::now() >= hello_deadline {
                         kill_group(&mut child);
-                        return Ok(anyhow!(
-                            "no hello within {}",
-                            format_duration(self.section.timeout)
-                        ));
+                        return Ok(anyhow!((self.language.messages().no_hello)(
+                            &format_duration(self.section.timeout)
+                        )));
                     }
                 }
                 Err(RecvTimeoutError::Disconnected) => {
                     let status = child.wait()?;
-                    return Ok(anyhow!(
-                        "exited with {}{}",
-                        describe(status),
-                        self.stderr_tail()
-                    ));
+                    return Ok(anyhow!("{}{}", self.describe(status), self.stderr_tail()));
                 }
             }
         }
@@ -184,26 +183,29 @@ impl Supervisor {
                 Err(RecvTimeoutError::Timeout) if Instant::now() < deadline && !self.stopped() => {}
                 _ => {
                     kill_group(&mut child);
-                    bail!("timed out after {}", format_duration(self.section.timeout));
+                    bail!(self.timed_out());
                 }
             }
         };
         if !status.success() {
-            bail!("exited with {}{}", describe(status), self.stderr_tail());
+            bail!("{}{}", self.describe(status), self.stderr_tail());
         }
         self.parse(&output)
     }
 
     fn start(&self, stderr: File) -> Result<Child> {
-        let executable = resolve(&self.section.plugin)?;
+        let executable = resolve(&self.section.plugin, self.language)?;
         let mut child = Command::new(&executable)
             .args(&self.section.args)
+            .env(LANGUAGE_VAR, self.language.code())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(stderr)
             .process_group(0)
             .spawn()
-            .with_context(|| format!("failed to start {}", executable.display()))?;
+            .with_context(|| {
+                (self.language.messages().failed_to_start)(&executable.display().to_string())
+            })?;
         if let Some(stdin) = child.stdin.as_mut() {
             let _ = stdin.write_all(hello_line().as_bytes());
         }
@@ -217,7 +219,7 @@ impl Supervisor {
             }
             if Instant::now() >= deadline || self.stopped() {
                 kill_group(child);
-                bail!("timed out after {}", format_duration(self.section.timeout));
+                bail!(self.timed_out());
             }
             thread::sleep(POLL);
         }
@@ -225,21 +227,21 @@ impl Supervisor {
 
     fn parse(&self, output: &str) -> Result<Update> {
         let mut lines = output.lines().filter(|line| !line.trim().is_empty());
-        expect_hello(lines.next())?;
+        expect_hello(lines.next(), self.language)?;
         let mut update = None;
         for line in lines {
-            if let PluginMessage::Snapshot { title, rows } = parse_message(line)? {
+            if let PluginMessage::Snapshot { title, rows } = parse_message(line, self.language)? {
                 update = Some(self.update(title, rows));
             }
         }
-        update.ok_or_else(|| anyhow!("no snapshot after hello"))
+        update.ok_or_else(|| anyhow!(self.language.messages().no_snapshot))
     }
 
     fn update(&self, title: Option<String>, rows: Vec<Row>) -> Update {
         Update {
             section: self.index,
             title: match &self.section.title {
-                Some(template) => title::expand(template),
+                Some(template) => title::expand(template, self.language),
                 None => title.unwrap_or_else(|| self.name.clone()),
             },
             rows,
@@ -248,6 +250,18 @@ impl Supervisor {
 
     fn error(&self, error: anyhow::Error) -> Update {
         self.update(None, vec![Row::new(format!("! {error:#}"))])
+    }
+
+    fn timed_out(&self) -> String {
+        (self.language.messages().timed_out)(&format_duration(self.section.timeout))
+    }
+
+    fn describe(&self, status: ExitStatus) -> String {
+        let messages = self.language.messages();
+        match status.code() {
+            Some(code) => (messages.exit_status)(code),
+            None => messages.killed.to_string(),
+        }
     }
 
     fn stderr_tail(&self) -> String {
@@ -275,7 +289,7 @@ impl Supervisor {
     }
 }
 
-pub(crate) fn resolve(plugin: &str) -> Result<PathBuf> {
+pub(crate) fn resolve(plugin: &str, language: Language) -> Result<PathBuf> {
     if plugin.contains('/') {
         return Ok(PathBuf::from(plugin));
     }
@@ -291,7 +305,7 @@ pub(crate) fn resolve(plugin: &str) -> Result<PathBuf> {
         .into_iter()
         .chain(on_path)
         .find(|candidate| candidate.is_file())
-        .ok_or_else(|| anyhow!("plugin not found: {name}"))
+        .ok_or_else(|| anyhow!((language.messages().not_found)(&name)))
 }
 
 fn hello_line() -> String {
@@ -305,20 +319,21 @@ fn hello_line() -> String {
     )
 }
 
-fn expect_hello(line: Option<&str>) -> Result<()> {
-    match line.map(parse_message).transpose()? {
+fn expect_hello(line: Option<&str>, language: Language) -> Result<()> {
+    let messages = language.messages();
+    match line.map(|line| parse_message(line, language)).transpose()? {
         Some(PluginMessage::Hello { protocol, .. }) if protocol == PLUGIN_PROTOCOL => Ok(()),
         Some(PluginMessage::Hello { protocol, .. }) => {
-            bail!("plugin speaks protocol {protocol}, expected {PLUGIN_PROTOCOL}")
+            bail!((messages.wrong_protocol)(protocol, PLUGIN_PROTOCOL))
         }
-        _ => bail!("expected a hello as the first line"),
+        _ => bail!(messages.expected_hello),
     }
 }
 
-fn parse_message(line: &str) -> Result<PluginMessage> {
+fn parse_message(line: &str, language: Language) -> Result<PluginMessage> {
     serde_json::from_str(line).map_err(|_| {
         let preview: String = line.chars().take(40).collect();
-        anyhow!("invalid message: {preview}")
+        anyhow!((language.messages().invalid_message)(&preview))
     })
 }
 
@@ -339,13 +354,6 @@ fn backoff(interval: Duration, failures: u32) -> Duration {
     interval
         .saturating_mul(factor)
         .min(MAX_BACKOFF.max(interval))
-}
-
-fn describe(status: ExitStatus) -> String {
-    match status.code() {
-        Some(code) => format!("status {code}"),
-        None => "a signal".to_string(),
-    }
 }
 
 fn format_duration(duration: Duration) -> String {

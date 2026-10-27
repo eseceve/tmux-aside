@@ -14,6 +14,7 @@ use anyhow::{Context, Result, anyhow};
 
 use crate::config::{self, EnterAction, SectionConfig};
 use crate::folds;
+use crate::i18n::Language;
 use crate::plugin::{self, Update};
 use crate::protocol::{Action, ClientMessage, DaemonMessage, Row};
 use crate::title;
@@ -116,7 +117,7 @@ pub fn run(socket: &Path, idle_timeout: Duration) -> Result<()> {
     let mut configs = loaded.sections.clone();
     let mut auto_reload = loaded.auto_reload;
     let mut enter = loaded.enter;
-    let mut plugins = start_plugins(loaded.sections, &events, 0);
+    let mut plugins = start_plugins(loaded.sections, view.language, &events, 0);
     let mut retired = Vec::new();
     let config_path = config::default_path().ok();
     let mut config_modified = modified(config_path.as_deref());
@@ -210,7 +211,7 @@ pub fn run(socket: &Path, idle_timeout: Duration) -> Result<()> {
             let generation = plugins.generation + 1;
             plugins.stop.store(true, Ordering::Relaxed);
             retired.append(&mut plugins.supervisors);
-            plugins = start_plugins(loaded.sections, &events, generation);
+            plugins = start_plugins(loaded.sections, view.language, &events, generation);
             clients.retain(|_, stream| send(stream, &view).is_ok());
         }
         if clients.is_empty() {
@@ -349,18 +350,24 @@ fn merge(
 }
 
 fn load() -> Loaded {
-    let notice = |text: String| Loaded {
-        view: View::new(vec![Section::new("tmux-aside", vec![Row::new(text)], None)]),
+    let notice = |text: String, language: Language| Loaded {
+        view: View {
+            language,
+            ..View::new(vec![Section::new("tmux-aside", vec![Row::new(text)], None)])
+        },
         sections: vec![],
         auto_reload: false,
         enter: EnterAction::Focus,
     };
+    let fallback = Language::from_env();
+    let messages = fallback.messages();
     let path = match config::default_path() {
         Ok(path) => path,
-        Err(error) => return notice(format!("! {error:#}")),
+        Err(error) => return notice(format!("! {error:#}"), fallback),
     };
     match config::load(&path) {
         Ok(Some(mut config)) if !config.sections.is_empty() => {
+            let language = config.language.unwrap_or(fallback);
             config.sections.sort_by_key(|section| section.pin);
             let sections = config
                 .sections
@@ -376,15 +383,16 @@ fn load() -> Loaded {
                         &section
                             .title
                             .as_deref()
-                            .map(title::expand)
+                            .map(|title| title::expand(title, language))
                             .unwrap_or_else(|| plugin::display_name(&section.plugin)),
-                        vec![Row::new("loading...")],
+                        vec![Row::new(language.messages().loading)],
                         section.max_height,
                     )
                 })
                 .collect();
             let mut view = View::new(sections);
             view.theme = config.theme;
+            view.language = language;
             if let Some(path) = folds::path() {
                 folds::apply(&mut view, &config.sections, &folds::read(&path));
                 view.restore_selection(view.selected.clone());
@@ -396,17 +404,24 @@ fn load() -> Loaded {
                 enter: config.enter,
             }
         }
-        Ok(Some(config)) => Loaded {
-            auto_reload: config.auto_reload,
-            ..notice(format!("add sections to {}", path.display()))
-        },
-        Ok(None) => notice(format!("create {}", path.display())),
-        Err(error) => notice(format!("! {error:#}")),
+        Ok(Some(config)) => {
+            let language = config.language.unwrap_or(fallback);
+            Loaded {
+                auto_reload: config.auto_reload,
+                ..notice(
+                    (language.messages().add_sections)(&path.display().to_string()),
+                    language,
+                )
+            }
+        }
+        Ok(None) => notice((messages.create)(&path.display().to_string()), fallback),
+        Err(error) => notice(format!("! {error:#}"), fallback),
     }
 }
 
 fn start_plugins(
     sections: Vec<SectionConfig>,
+    language: Language,
     events: &Sender<Event>,
     generation: usize,
 ) -> Plugins {
@@ -427,7 +442,7 @@ fn start_plugins(
                 Err(_) => PathBuf::from("/dev/null"),
             };
             let events = events.clone();
-            plugin::spawn(index, section, log, stop.clone(), move |update| {
+            plugin::spawn(index, section, log, language, stop.clone(), move |update| {
                 let _ = events.send(Event::Section(generation, update));
             })
         })

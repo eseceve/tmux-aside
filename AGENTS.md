@@ -34,6 +34,7 @@ The plugin protocol is described in [docs/plugins.md](docs/plugins.md). How the 
 - **Hook commands are silent and never fail.** `tmux-aside-agents set-status` and `register` run from AI agents' hooks. They must exit 0, write nothing to stdout and do nothing when `$TMUX_PANE` is unset, because some agents read hook stdout as a decision.
 - **Tests never touch the real agent configs.** `setup` tests point the agent's config at a temporary directory with `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `HOME`.
 - **The protocol is versioned.** New fields must be optional so older plugins keep working.
+- **Text shown in the sidebar is translated.** Each crate keeps its English and Spanish strings in a `Messages` table selected by `Language`. Code that builds text takes the `Language` as a parameter and never reads the environment, so tests do not depend on the machine's locale; only entry points (each `main.rs`, the daemon's config loading and the sidebar client) call `Language::from_env()` or `Language::detect()`. Tests that start a binary set `TMUX_ASIDE_LANG=en`. CLI values, JSON output and `--help` stay in English.
 
 ## Conventions
 

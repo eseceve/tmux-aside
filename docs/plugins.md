@@ -15,6 +15,8 @@ sections:
 
 `args` are passed as command-line arguments. stderr goes to `$XDG_STATE_HOME/tmux-aside/<index>-<name>.log`.
 
+`$TMUX_ASIDE_LANG` holds the language of the sidebar (`en` or `es`, from the `language` key of the config or the user's locale). Plugins that show text of their own can use it to pick their language; more languages may be added later, so fall back to English for any value you do not know.
+
 ## The protocol
 
 Messages are JSON objects, one per line, with a `type`. The current protocol version is `1`.
