@@ -153,3 +153,33 @@ fn the_plugin_shows_the_pull_request_of_the_agents_branch() {
         })
     });
 }
+
+#[test]
+fn list_prints_each_agent_status_as_text_or_json() {
+    let tmux = Tmux::start();
+    let pane = tmux.split();
+    tmux.run(Some("%0"), &["set-status", "working"]);
+    tmux.run(Some(&pane), &["set-status", "waiting"]);
+
+    let output = tmux.run(None, &["list", "--json"]);
+
+    assert!(output.status.success());
+    let agents: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let status = |id: &str| {
+        agents
+            .iter()
+            .find(|agent| agent["pane_id"] == id)
+            .map(|agent| agent["status"].clone())
+    };
+    assert_eq!(agents.len(), 2, "{agents:?}");
+    assert_eq!(status("%0"), Some("working".into()));
+    assert_eq!(status(&pane), Some("waiting".into()));
+    assert_eq!(agents[0]["project"], "repo");
+
+    let text = String::from_utf8(tmux.run(None, &["list"]).stdout).unwrap();
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with(&format!("{pane}\twaiting\trepo\t"))),
+        "{text}"
+    );
+}

@@ -137,6 +137,7 @@ Lists AI coding agents running in tmux panes. Claude Code, Codex and Antigravity
 - `--detect aider`: also list panes running `aider` as agents, working while their pane changes.
 - `--notify waiting --notify done --notify-via tmux --notify-via desktop`: notify when an agent needs you, unless you are looking at it.
 - `tmux-aside-agents next [--status waiting]`: switch to the agent waiting the longest; call it again to cycle.
+- `tmux-aside-agents list [--json]`: print each agent's pane, status, project, window and title, or their full state as JSON, for scripts and for an agent that coordinates others.
 - Keys on a row: `enter` jumps to the agent, `p` opens its pull request.
 
 ### github

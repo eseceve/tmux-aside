@@ -72,6 +72,12 @@ enum Command {
         #[arg(long, value_name = "STATUS", value_enum, default_value = "waiting")]
         status: Vec<NotifyStatus>,
     },
+    /// Print the agents that hooks registered: pane, status, project, window and title
+    List {
+        /// Print a JSON array of agent states instead
+        #[arg(long)]
+        json: bool,
+    },
     /// Install the status hooks into an agent's settings
     Setup {
         #[command(subcommand)]
@@ -137,6 +143,7 @@ fn main() -> ExitCode {
         Some(Command::SetStatus { status }) => hook(|| set_status(status)),
         Some(Command::Register) => hook(register),
         Some(Command::Next { status }) => jump(&statuses(status)),
+        Some(Command::List { json }) => list(json),
         Some(Command::Setup { agent }) => setup(agent),
         None => run_plugin(
             RowOptions {
@@ -199,6 +206,25 @@ fn jump(statuses: &[Status]) -> Result<()> {
             .map(drop)
         }
     }
+}
+
+fn list(json: bool) -> Result<()> {
+    let agents = reconcile(load_states(&agents_dir()?), &live_panes()?).agents;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&agents)?);
+        return Ok(());
+    }
+    for agent in agents {
+        println!(
+            "{}\t{}\t{}\t{}\t{}",
+            agent.pane_id,
+            agent.status.map_or("-", Status::name),
+            agent.project,
+            agent.window,
+            agent.title
+        );
+    }
+    Ok(())
 }
 
 fn hook(run: impl FnOnce() -> Result<()>) -> Result<()> {
