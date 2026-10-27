@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use jiff::Timestamp;
 use serde::Deserialize;
 use serde_json::Value;
+use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{Action, Row, Tone};
 
 const COPY_SCRIPT: &str = "if command -v pbcopy >/dev/null; then printf %s \"$1\" | pbcopy; \
@@ -11,6 +12,49 @@ else printf %s \"$1\" | xclip -selection clipboard; fi";
 /// GraphQL query listing pull requests that match a GitHub search (`$q`), with the fields
 /// the rows show.
 pub const SEARCH_QUERY: &str = "query($q: String!, $limit: Int!) { search(query: $q, type: ISSUE_ADVANCED, first: $limit) { nodes { ... on PullRequest { number title url isDraft additions deletions reviewDecision createdAt updatedAt author { login } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }";
+
+/// Text the section shows, in one language.
+pub struct Messages {
+    /// Default section title.
+    pub title: &'static str,
+    pub failed_to_run_gh: &'static str,
+    approvals_of: fn(usize, u32) -> String,
+    one_approval: &'static str,
+    approvals: fn(usize) -> String,
+    unresolved: fn(usize) -> String,
+    open_in_browser: &'static str,
+    copy_url: &'static str,
+}
+
+const EN: Messages = Messages {
+    title: "Pull requests",
+    failed_to_run_gh: "failed to run gh",
+    approvals_of: |approvals, required| format!("{approvals}/{required} approvals"),
+    one_approval: "1 approval",
+    approvals: |approvals| format!("{approvals} approvals"),
+    unresolved: |threads| format!("{threads} unresolved"),
+    open_in_browser: "open in the browser",
+    copy_url: "copy the URL",
+};
+
+const ES: Messages = Messages {
+    title: "Pull requests",
+    failed_to_run_gh: "no se pudo ejecutar gh",
+    approvals_of: |approvals, required| format!("{approvals}/{required} aprobaciones"),
+    one_approval: "1 aprobación",
+    approvals: |approvals| format!("{approvals} aprobaciones"),
+    unresolved: |threads| format!("{threads} sin resolver"),
+    open_in_browser: "abrir en el navegador",
+    copy_url: "copiar la URL",
+};
+
+/// The section's text in `language`.
+pub fn messages(language: Language) -> &'static Messages {
+    match language {
+        Language::En => &EN,
+        Language::Es => &ES,
+    }
+}
 
 /// A pull request returned by the search.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,6 +175,8 @@ pub struct RowOptions {
     pub merge_info: bool,
     /// Start the first extra line with the lines added and removed, as `+N -M`.
     pub diff: bool,
+    /// Language of the text the rows add.
+    pub language: Language,
 }
 
 /// One row per pull request, grouped by repository (alphabetical) with the most recently
@@ -150,7 +196,7 @@ pub fn rows(pull_requests: &[PullRequest], options: &RowOptions) -> Vec<Row> {
                 .byline_at
                 .map(|now| byline(pr, now))
                 .into_iter()
-                .chain(options.merge_info.then(|| merge_info(pr)))
+                .chain(options.merge_info.then(|| merge_info(pr, options.language)))
                 .collect();
             if options.diff {
                 let diff = format!("+{} -{}", pr.additions, pr.deletions);
@@ -161,7 +207,7 @@ pub fn rows(pull_requests: &[PullRequest], options: &RowOptions) -> Vec<Row> {
             }
             Row {
                 lines,
-                ..row(pr, &options.colored)
+                ..row(pr, &options.colored, options.language)
             }
         })
         .collect()
@@ -180,15 +226,16 @@ fn byline(pr: &PullRequest, now: Timestamp) -> String {
 /// `2 unresolved · 1/2 approvals`; the threads part is left out when every thread is
 /// resolved, and the required count when the base branch requires none or its protection is
 /// not visible.
-pub fn merge_info(pr: &PullRequest) -> String {
+pub fn merge_info(pr: &PullRequest, language: Language) -> String {
+    let messages = messages(language);
     let approvals = match pr.required_approvals.filter(|required| *required > 0) {
-        Some(required) => format!("{}/{required} approvals", pr.approvals),
-        None if pr.approvals == 1 => "1 approval".to_string(),
-        None => format!("{} approvals", pr.approvals),
+        Some(required) => (messages.approvals_of)(pr.approvals, required),
+        None if pr.approvals == 1 => messages.one_approval.to_string(),
+        None => (messages.approvals)(pr.approvals),
     };
     match pr.unresolved_threads {
         0 => approvals,
-        threads => format!("{threads} unresolved · {approvals}"),
+        threads => format!("{} · {approvals}", (messages.unresolved)(threads)),
     }
 }
 
@@ -201,7 +248,8 @@ pub fn format_age(seconds: u64) -> String {
     }
 }
 
-fn row(pr: &PullRequest, colored: &[Part]) -> Row {
+fn row(pr: &PullRequest, colored: &[Part], language: Language) -> Row {
+    let messages = messages(language);
     let (icon, state_tone) = pr.state().style();
     let tone = |part: Part, otherwise: Tone| match colored.contains(&part) {
         true => state_tone,
@@ -216,11 +264,11 @@ fn row(pr: &PullRequest, colored: &[Part]) -> Row {
         group: Some(pr.repository.clone()),
         actions: vec![
             Action {
-                label: Some("open in the browser".to_string()),
+                label: Some(messages.open_in_browser.to_string()),
                 ..Action::new("enter", &["gh", "pr", "view", "--web", &pr.url])
             },
             Action {
-                label: Some("copy the URL".to_string()),
+                label: Some(messages.copy_url.to_string()),
                 ..Action::new("c", &["sh", "-c", COPY_SCRIPT, "copy", &pr.url])
             },
         ],

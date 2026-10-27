@@ -3,8 +3,9 @@ use std::process::{Command, ExitCode};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use jiff::Timestamp;
+use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
-use tmux_aside_github::{Part, RowOptions, SEARCH_QUERY, parse_search, rows};
+use tmux_aside_github::{Part, RowOptions, SEARCH_QUERY, messages, parse_search, rows};
 
 /// Sidebar section listing GitHub pull requests that match a search.
 #[derive(Parser)]
@@ -14,9 +15,9 @@ struct Cli {
     /// only some repositories
     #[arg(long, default_value = "is:pr is:open author:@me archived:false")]
     query: String,
-    /// Section title
-    #[arg(long, default_value = "Pull requests")]
-    title: String,
+    /// Section title [default: "Pull requests", in the sidebar's language]
+    #[arg(long)]
+    title: Option<String>,
     /// Maximum number of pull requests
     #[arg(long, default_value_t = 50)]
     limit: u32,
@@ -45,6 +46,8 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<()> {
+    let language = Language::from_env();
+    let messages = messages(language);
     let output = Command::new("gh")
         .args(["api", "graphql", "-f"])
         .arg(format!("query={SEARCH_QUERY}"))
@@ -53,7 +56,7 @@ fn run(cli: Cli) -> Result<()> {
         .arg("-F")
         .arg(format!("limit={}", cli.limit))
         .output()
-        .context("failed to run gh")?;
+        .context(messages.failed_to_run_gh)?;
     if !output.status.success() {
         bail!("gh: {}", String::from_utf8_lossy(&output.stderr).trim());
     }
@@ -65,6 +68,7 @@ fn run(cli: Cli) -> Result<()> {
             byline_at: cli.byline.then(Timestamp::now),
             merge_info: cli.merge_info,
             diff: cli.diff,
+            language,
         },
     );
     print(&PluginMessage::Hello {
@@ -72,7 +76,7 @@ fn run(cli: Cli) -> Result<()> {
         features: vec![],
     })?;
     print(&PluginMessage::Snapshot {
-        title: Some(cli.title),
+        title: Some(cli.title.unwrap_or_else(|| messages.title.to_string())),
         rows,
     })
 }

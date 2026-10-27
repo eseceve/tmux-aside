@@ -35,6 +35,7 @@ impl FakeGh {
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_tmux-aside-github"))
             .args(args)
+            .env("TMUX_ASIDE_LANG", "en")
             .env(
                 "PATH",
                 format!("{}:{}", self.0.display(), std::env::var("PATH").unwrap()),

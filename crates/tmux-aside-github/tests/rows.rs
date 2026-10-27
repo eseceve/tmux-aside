@@ -1,4 +1,5 @@
 use jiff::Timestamp;
+use tmux_aside::i18n::Language;
 use tmux_aside::protocol::Tone;
 use tmux_aside_github::{Part, RowOptions, State, format_age, merge_info, parse_search, rows};
 
@@ -274,16 +275,19 @@ fn conflicts_come_right_after_failing_checks() {
 #[test]
 fn merge_info_lists_unresolved_threads_and_approvals() {
     let mut pr = pull_request(false, "", "");
-    assert_eq!(merge_info(&pr), "1 unresolved · 1/2 approvals");
+    assert_eq!(
+        merge_info(&pr, Language::En),
+        "1 unresolved · 1/2 approvals"
+    );
 
     pr.unresolved_threads = 0;
     pr.required_approvals = Some(0);
     pr.approvals = 0;
-    assert_eq!(merge_info(&pr), "0 approvals");
+    assert_eq!(merge_info(&pr, Language::En), "0 approvals");
 
     pr.required_approvals = None;
     pr.approvals = 1;
-    assert_eq!(merge_info(&pr), "1 approval");
+    assert_eq!(merge_info(&pr, Language::En), "1 approval");
 
     let rows = rows(
         &[pr],
@@ -336,4 +340,32 @@ fn diff_stats_start_the_first_extra_line_or_stand_alone() {
         }),
         ["+120 -8 · 1 unresolved · 1/2 approvals"]
     );
+}
+
+#[test]
+fn rows_are_shown_in_spanish() {
+    let mut pr = pull_request(false, "", "");
+    assert_eq!(
+        merge_info(&pr, Language::Es),
+        "1 sin resolver · 1/2 aprobaciones"
+    );
+
+    pr.unresolved_threads = 0;
+    pr.required_approvals = None;
+    pr.approvals = 1;
+    let rows = rows(
+        &[pr],
+        &RowOptions {
+            merge_info: true,
+            language: Language::Es,
+            ..Default::default()
+        },
+    );
+    assert_eq!(rows[0].lines, ["1 aprobación"]);
+    let labels: Vec<_> = rows[0]
+        .actions
+        .iter()
+        .map(|action| action.label.as_deref().unwrap_or(""))
+        .collect();
+    assert_eq!(labels, ["abrir en el navegador", "copiar la URL"]);
 }
