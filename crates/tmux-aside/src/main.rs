@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use tmux_aside::setup::{self, Action, Ai};
 use tmux_aside::width::Width;
@@ -143,7 +143,7 @@ fn main() -> Result<()> {
 
 fn reload() -> Result<()> {
     if !daemon::reload(&daemon::default_socket()?)? {
-        eprintln!("tmux-aside is not running");
+        bail!("tmux-aside is not running; start it with `tmux-aside on`");
     }
     Ok(())
 }

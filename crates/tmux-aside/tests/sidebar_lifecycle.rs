@@ -213,3 +213,19 @@ fn a_dragged_width_survives_turning_the_sidebar_off_and_on() {
 
     assert_eq!(server.sidebars()[0].width, 44);
 }
+
+#[test]
+fn reload_fails_when_the_sidebar_is_not_running() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_tmux-aside"))
+        .arg("reload")
+        .env("TMUX", "/nonexistent/tmux-aside-test,1,0")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("tmux-aside is not running"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
