@@ -8,9 +8,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 use tmux_aside::config::{parse_duration, state_dir};
+use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
 use tmux_aside_usage::{
-    claude_windows, codex_windows, rows, statusline_command, wrapped_statusline,
+    claude_windows, codex_windows, messages, rows, statusline_command, wrapped_statusline,
 };
 
 const CODEX_TIMEOUT: Duration = Duration::from_secs(20);
@@ -95,6 +96,7 @@ fn statusline(original: &str) -> ExitCode {
 
 fn run_plugin(codex_interval: Duration, only_running: bool) -> Result<()> {
     let now = now();
+    let language = Language::from_env();
     let running = only_running.then(running_commands);
     let shown = |command: &str| {
         running
@@ -105,23 +107,23 @@ fn run_plugin(codex_interval: Duration, only_running: bool) -> Result<()> {
     if shown("claude") {
         let claude = read_cache("claude-limits.json")
             .and_then(|cache| cache.get("rate_limits").cloned())
-            .map(|rate_limits| claude_windows(&rate_limits, now))
+            .map(|rate_limits| claude_windows(&rate_limits, now, language))
             .unwrap_or_default();
         tools.push(("Claude".to_string(), claude));
     }
     if shown("codex") {
         let codex = codex_limits(codex_interval, now)
-            .map(|result| codex_windows(&result, now))
+            .map(|result| codex_windows(&result, now, language))
             .unwrap_or_default();
         tools.push(("Codex".to_string(), codex));
     }
-    let rows = rows(&tools, now);
+    let rows = rows(&tools, now, language);
     print(&PluginMessage::Hello {
         protocol: PLUGIN_PROTOCOL,
         features: vec![],
     })?;
     print(&PluginMessage::Snapshot {
-        title: Some("Usage".to_string()),
+        title: Some(messages(language).title.to_string()),
         rows,
     })
 }

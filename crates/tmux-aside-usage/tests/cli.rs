@@ -27,6 +27,7 @@ impl Home {
         let mut command = Command::new(env!("CARGO_BIN_EXE_tmux-aside-usage"));
         command
             .args(args)
+            .env("TMUX_ASIDE_LANG", "en")
             .env("XDG_STATE_HOME", self.0.join("state"))
             .env("CLAUDE_CONFIG_DIR", self.0.join("claude"))
             .env(

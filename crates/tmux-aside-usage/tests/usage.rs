@@ -1,4 +1,5 @@
 use serde_json::json;
+use tmux_aside::i18n::Language;
 use tmux_aside::protocol::Tone;
 use tmux_aside_usage::{
     Window, claude_windows, codex_windows, format_remaining, rows, statusline_command,
@@ -15,7 +16,7 @@ fn claude_windows_come_from_the_statusline_rate_limits() {
     });
 
     assert_eq!(
-        claude_windows(&rate_limits, NOW),
+        claude_windows(&rate_limits, NOW, Language::En),
         [
             Window {
                 label: "5 hours".to_string(),
@@ -37,7 +38,7 @@ fn claude_windows_that_already_reset_or_are_missing_are_skipped() {
         "five_hour": {"used_percentage": 90, "resets_at": NOW - 1},
     });
 
-    assert!(claude_windows(&rate_limits, NOW).is_empty());
+    assert!(claude_windows(&rate_limits, NOW, Language::En).is_empty());
 }
 
 #[test]
@@ -50,7 +51,7 @@ fn codex_windows_are_named_by_their_duration_not_their_slot() {
     });
 
     assert_eq!(
-        codex_windows(&result, NOW),
+        codex_windows(&result, NOW, Language::En),
         [Window {
             label: "Weekly".to_string(),
             used_percent: 0.0,
@@ -64,7 +65,7 @@ fn codex_windows_are_named_by_their_duration_not_their_slot() {
             "secondary": {"usedPercent": 5, "windowDurationMins": 10080, "resetsAt": NOW + 600}
         }
     });
-    let labels: Vec<String> = codex_windows(&both, NOW)
+    let labels: Vec<String> = codex_windows(&both, NOW, Language::En)
         .into_iter()
         .map(|window| window.label)
         .collect();
@@ -82,7 +83,7 @@ fn rows_group_windows_by_tool_with_percent_and_time_to_reset() {
         }],
     )];
 
-    let rows = rows(&windows, NOW);
+    let rows = rows(&windows, NOW, Language::En);
 
     assert_eq!(rows[0].group.as_deref(), Some("Claude"));
     assert_eq!(rows[0].text, "5 hours");
@@ -104,7 +105,7 @@ fn rows_carry_a_meter_and_line_up_across_tools() {
         ("Codex".to_string(), vec![window("Weekly", 0.0, 168)]),
     ];
 
-    let rows = rows(&tools, NOW);
+    let rows = rows(&tools, NOW, Language::En);
 
     let summary: Vec<(&str, &str, Option<u8>)> = rows
         .iter()
@@ -131,7 +132,7 @@ fn usage_is_colored_by_how_close_it_is_to_the_limit() {
                 resets_at: NOW + 60,
             }],
         )];
-        rows(&windows, NOW).remove(0).meter_tone
+        rows(&windows, NOW, Language::En).remove(0).meter_tone
     };
 
     assert_eq!(tone(10.0), Tone::Success);
@@ -141,7 +142,7 @@ fn usage_is_colored_by_how_close_it_is_to_the_limit() {
 
 #[test]
 fn tools_without_data_say_so() {
-    let rows = rows(&[("Codex".to_string(), vec![])], NOW);
+    let rows = rows(&[("Codex".to_string(), vec![])], NOW, Language::En);
 
     assert_eq!(rows[0].text, "no data");
     assert_eq!(rows[0].tone, Tone::Muted);
@@ -175,10 +176,41 @@ fn only_the_meter_is_colored_and_the_detail_stays_muted() {
         }],
     )];
 
-    let row = rows(&windows, NOW).remove(0);
+    let row = rows(&windows, NOW, Language::En).remove(0);
 
     assert_eq!(
         (row.meter_tone, row.detail_tone),
         (Tone::Danger, Tone::Muted)
     );
+}
+
+#[test]
+fn windows_and_missing_data_are_shown_in_spanish() {
+    let rate_limits = json!({
+        "five_hour": {"used_percentage": 10, "resets_at": NOW + 60},
+        "seven_day": {"used_percentage": 20, "resets_at": NOW + 600}
+    });
+    let codex = json!({
+        "rateLimits": {
+            "primary": {"usedPercent": 5, "windowDurationMins": 4320, "resetsAt": NOW + 60}
+        }
+    });
+    let tools = vec![
+        (
+            "Claude".to_string(),
+            claude_windows(&rate_limits, NOW, Language::Es),
+        ),
+        (
+            "Codex".to_string(),
+            codex_windows(&codex, NOW, Language::Es),
+        ),
+        ("Agy".to_string(), vec![]),
+    ];
+
+    let texts: Vec<String> = rows(&tools, NOW, Language::Es)
+        .into_iter()
+        .map(|row| row.text)
+        .collect();
+
+    assert_eq!(texts, ["5 horas", "Semanal", "3 días ", "sin datos"]);
 }
