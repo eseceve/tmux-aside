@@ -26,6 +26,8 @@ const STABLE_STREAM: Duration = Duration::from_secs(5);
 pub struct Update {
     pub section: usize,
     pub title: String,
+    /// The title of a collapsed section, when it differs from `title`.
+    pub collapsed_title: Option<String>,
     pub summary: Option<String>,
     pub rows: Vec<Row>,
 }
@@ -252,6 +254,11 @@ impl Supervisor {
                 Some(template) => title::expand(template, self.language),
                 None => title.unwrap_or_else(|| self.name.clone()),
             },
+            collapsed_title: self
+                .section
+                .title
+                .as_deref()
+                .map(|template| title::expand_short(template, self.language)),
             summary,
             rows,
         }

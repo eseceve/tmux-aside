@@ -272,20 +272,27 @@ fn section_lines(
     lines
 }
 
-/// The section title centered on a separator line, with its row count when shown and a
-/// leading `▸` and its summary when the section is collapsed, cut to 80% of the width.
+/// The section title centered on a separator line, with its row count when shown, cut to 80%
+/// of the width. A collapsed section shows a leading `▸`, its collapsed title and its summary.
 fn header(section: &Section, width: usize) -> Vec<Span> {
-    let (arrow, summary) = match (section.collapsed, &section.summary) {
-        (true, Some(summary)) => ("▸ ", format!(" · {summary}")),
-        (true, None) => ("▸ ", String::new()),
-        (false, _) => ("", String::new()),
+    let (arrow, title, summary) = match section.collapsed {
+        true => (
+            "▸ ",
+            section.collapsed_title.as_ref().unwrap_or(&section.title),
+            section
+                .summary
+                .as_ref()
+                .map(|summary| format!(" · {summary}"))
+                .unwrap_or_default(),
+        ),
+        false => ("", &section.title, String::new()),
     };
     let count = match section.counts {
         true => format!(" · {}", section.rows.len()),
         false => String::new(),
     };
     let title = truncate(
-        &format!("{arrow}{}{summary}{count}", section.title),
+        &format!("{arrow}{title}{summary}{count}"),
         (width * 8 / 10).min(width.saturating_sub(4)),
     );
     let title = format!(" {title} ");

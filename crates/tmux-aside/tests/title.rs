@@ -1,6 +1,6 @@
 use jiff::civil::date;
 use tmux_aside::i18n::Language;
-use tmux_aside::title::{expand, expand_on};
+use tmux_aside::title::{expand, expand_on, expand_short_on};
 
 #[test]
 fn today_expands_to_the_date_in_the_sidebar_language() {
@@ -29,4 +29,16 @@ fn today_with_a_language_tag_ignores_the_sidebar_language() {
 #[test]
 fn titles_without_placeholders_are_kept_as_written() {
     assert_eq!(expand("Pull Request", Language::Es), "Pull Request");
+}
+
+#[test]
+fn the_short_form_cuts_the_month_to_three_letters() {
+    assert_eq!(
+        expand_short_on("${today}", date(2026, 10, 27), Language::En),
+        "Tuesday, Oct 27"
+    );
+    assert_eq!(
+        expand_short_on("${today}", date(2026, 9, 2), Language::Es),
+        "Miércoles 2 de Sep"
+    );
 }

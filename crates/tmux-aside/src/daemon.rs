@@ -182,6 +182,7 @@ pub fn run(socket: &Path, idle_timeout: Duration) -> Result<()> {
             Ok(Event::Section(generation, update)) if generation == plugins.generation => {
                 view.set_section(update.section, &update.title, update.rows);
                 if let Some(section) = view.sections.get_mut(update.section) {
+                    section.collapsed_title = update.collapsed_title;
                     section.summary = update.summary;
                 }
                 clients.retain(|_, stream| send(stream, &view).is_ok());
@@ -382,6 +383,10 @@ fn load() -> Loaded {
                     density: section.density,
                     collapsed: section.collapsed && section.header,
                     pin: section.pin,
+                    collapsed_title: section
+                        .title
+                        .as_deref()
+                        .map(|title| title::expand_short(title, language)),
                     ..Section::new(
                         &section
                             .title

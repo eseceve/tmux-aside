@@ -90,17 +90,18 @@ fn long_text_is_truncated_with_an_ellipsis_and_keeps_its_detail() {
 }
 
 #[test]
-fn collapsed_sections_show_their_summary_next_to_the_title() {
+fn collapsed_sections_show_their_collapsed_title_and_summary() {
     let summarized = Section {
+        collapsed_title: Some("27 de Oct".to_string()),
         summary: Some("14:20".to_string()),
         counts: false,
-        ..Section::new("Martes 27", vec![Row::new("Chile")], None)
+        ..Section::new("27 de Octubre", vec![Row::new("Chile")], None)
     };
     let mut view = View::new(vec![summarized]);
 
-    assert_eq!(texts(&view, 30, 1), ["───────── Martes 27 ──────────"]);
+    assert_eq!(texts(&view, 30, 1), ["─────── 27 de Octubre ────────"]);
     view.apply(Key::Toggle);
-    assert_eq!(texts(&view, 30, 1), ["──── ▸ Martes 27 · 14:20 ─────"]);
+    assert_eq!(texts(&view, 30, 1), ["──── ▸ 27 de Oct · 14:20 ─────"]);
 }
 
 #[test]

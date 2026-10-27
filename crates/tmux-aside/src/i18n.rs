@@ -136,6 +136,15 @@ impl Language {
         }
     }
 
+    /// `date` with the month cut to three letters, e.g. "Tuesday, Oct 27" or "Martes 27 de Oct".
+    pub fn short_date(self, date: Date) -> String {
+        let (weekday, month, day) = (self.weekday(date), &self.month(date)[..3], date.day());
+        match self {
+            Language::En => format!("{weekday}, {month} {day}"),
+            Language::Es => format!("{weekday} {day} de {month}"),
+        }
+    }
+
     pub(crate) fn messages(self) -> &'static Messages {
         match self {
             Language::En => &EN,
