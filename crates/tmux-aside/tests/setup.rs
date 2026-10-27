@@ -3,7 +3,7 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tmux_aside::setup::{
-    Binding, block_bindings, describe_key, merge_block, render_block, tmux_config_path,
+    Binding, block_bindings, describe_key, merge_block, parse_key, render_block, tmux_config_path,
 };
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -208,6 +208,15 @@ fn describes_keys_the_way_people_press_them() {
     assert_eq!(describe_key("B"), "prefix + B");
     assert_eq!(describe_key("-n M-w"), "M-w (no prefix)");
     assert_eq!(describe_key("-T copy-mode-vi y"), "y in copy-mode-vi");
+}
+
+#[test]
+fn reads_a_key_written_as_bind_key_takes_it_or_as_it_is_described() {
+    for key in ["r", "-n M-w", "-T copy-mode-vi y"] {
+        assert_eq!(parse_key(key), key);
+        assert_eq!(parse_key(&describe_key(key)), key);
+    }
+    assert_eq!(parse_key("  Prefix + R "), "R");
 }
 
 #[test]

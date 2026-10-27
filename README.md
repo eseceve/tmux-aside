@@ -50,7 +50,7 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
    tmux-aside setup
    ```
 
-   For each action it lists a few keys, marked free or with what they run today in your tmux, with the first free one selected; `Other key...` takes any key as written after `bind-key` (`-n M-t` binds Alt+t without the prefix). Then it asks which AI hooks to install. Nothing changes until every question is answered.
+   For each action it lists a few keys, marked free or with what they run today in your tmux, with the first free one selected; `Other key...` takes a key as the list shows it (`prefix + r`) or as written after `bind-key` (`-n M-t` binds Alt+t without the prefix). Then it asks which AI hooks to install. Nothing changes until every question is answered.
 
    | Action | Keys offered |
    |---|---|

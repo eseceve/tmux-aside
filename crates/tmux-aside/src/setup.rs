@@ -197,6 +197,26 @@ pub fn describe_key(key: &str) -> String {
     }
 }
 
+/// Reads a key written as `bind-key` takes it (`r`, `-n M-w`) or as [`describe_key`] shows it
+/// (`prefix + r`, `M-w (no prefix)`, `y in copy-mode-vi`), and returns the `bind-key` form.
+pub fn parse_key(input: &str) -> String {
+    let input = input.trim();
+    if let Some((table, name)) = input.split_once(" + ")
+        && table.trim().eq_ignore_ascii_case("prefix")
+    {
+        return name.trim().to_string();
+    }
+    if let Some(name) = input.strip_suffix("(no prefix)") {
+        return format!("-n {}", name.trim());
+    }
+    if let Some((name, table)) = input.split_once(" in ")
+        && !name.trim().starts_with('-')
+    {
+        return format!("-T {} {}", table.trim(), name.trim());
+    }
+    input.to_string()
+}
+
 /// Asks for a key per action and the AI hooks to install, then writes the bindings to the
 /// tmux config, applies them to the running server and installs the hooks. Nothing changes
 /// until every question is answered.
@@ -239,7 +259,7 @@ pub fn run(options: Options) -> Result<()> {
             .keys
             .iter()
             .find(|(given, _)| *given == action)
-            .map(|(_, key)| key.clone());
+            .map(|(_, key)| parse_key(key));
         let current = previous
             .iter()
             .find(|binding| {
@@ -392,11 +412,11 @@ fn choose_key(action: Action, current: Option<String>) -> Result<String> {
         Choice::Other => {
             let key = Text::new("Key:")
                 .with_help_message(
-                    "as after bind-key: T for prefix + T, -n M-t for Alt+t without the prefix",
+                    "prefix + T, or as after bind-key: T for prefix + T, -n M-t for Alt+t without the prefix",
                 )
                 .prompt()
                 .context("setup canceled; nothing was changed")?;
-            Ok(key.trim().to_string())
+            Ok(parse_key(&key))
         }
     }
 }
