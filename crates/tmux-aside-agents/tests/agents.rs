@@ -28,6 +28,7 @@ fn state(
         title: String::new(),
         workdir: String::new(),
         window_id: String::new(),
+        window_index: 0,
         diff: None,
         stalled: false,
         inferred: false,
@@ -60,6 +61,7 @@ fn live(pane: &str) -> LivePane {
         path: String::new(),
         window_id: "@1".to_string(),
         window_name: String::new(),
+        window_index: 0,
         viewed: false,
     }
 }
@@ -222,6 +224,42 @@ fn alphabetical_sort_orders_windows_within_each_project() {
     .collect();
 
     assert_eq!(order, ["deploy", "tests", "build"]);
+}
+
+#[test]
+fn window_sort_follows_the_tmux_window_order_across_projects() {
+    let at = |pane: &str, project: &str, window: &str, index: u32| AgentState {
+        window_index: index,
+        ..state(pane, project, window, Some(Status::Waiting), 0)
+    };
+    let agents = vec![
+        at("%1", "api", "alpha", 3),
+        at("%2", "web", "beta", 1),
+        at("%3", "api", "gamma", 2),
+    ];
+    let flat_by_window = RowOptions {
+        sort: Sort::Window,
+        ..flat()
+    };
+
+    let order: Vec<String> = rows(&agents, 0, flat_by_window, &HashMap::new())
+        .into_iter()
+        .map(|row| row.text)
+        .collect();
+
+    assert_eq!(order, ["beta", "gamma", "alpha"]);
+}
+
+#[test]
+fn reconcile_takes_the_window_index_from_the_live_pane() {
+    let moved = LivePane {
+        window_index: 7,
+        ..live("%1")
+    };
+
+    let result = reconcile(vec![state("%1", "api", "w", None, 0)], &[moved]);
+
+    assert_eq!(result.agents[0].window_index, 7);
 }
 
 #[test]

@@ -22,7 +22,7 @@ const DIFF_POLL: Duration = Duration::from_secs(5);
 const ACTIVE_FOR: u64 = 3;
 const NOTIFICATION_MS: &str = "5000";
 const SUPPORTED_AGENTS: [&str; 3] = ["claude", "codex", "agy"];
-const LIVE_PANE_FORMAT: &str = "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_active}\t#{window_active}\t#{session_attached}\t#{pane_current_path}\t#{window_id}\t#{host}\t#{window_name}\t#{pane_title}";
+const LIVE_PANE_FORMAT: &str = "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_active}\t#{window_active}\t#{session_attached}\t#{pane_current_path}\t#{window_id}\t#{window_index}\t#{host}\t#{window_name}\t#{pane_title}";
 
 /// Sidebar section listing AI agents running in tmux panes, and the hook commands that
 /// report their status.
@@ -143,6 +143,7 @@ enum GroupArg {
 enum SortArg {
     Priority,
     Alphabetical,
+    Window,
 }
 
 fn main() -> ExitCode {
@@ -158,6 +159,7 @@ fn main() -> ExitCode {
                 sort: match cli.sort {
                     SortArg::Priority => Sort::Priority,
                     SortArg::Alphabetical => Sort::Alphabetical,
+                    SortArg::Window => Sort::Window,
                 },
                 elapsed: cli.elapsed,
                 group: match cli.group {
@@ -311,6 +313,7 @@ fn record(status: Option<Status>, background: bool) -> Result<()> {
             .as_ref()
             .map(|previous| previous.window_id.clone())
             .unwrap_or_default(),
+        window_index: 0,
         title: previous.map(|previous| previous.title).unwrap_or_default(),
         diff: None,
         stalled: false,
@@ -525,6 +528,7 @@ fn current_agents(dir: &Path, live: &[LivePane], detect: &[String]) -> Result<Ve
             title: pane.title.clone(),
             workdir: pane.path.clone(),
             window_id: pane.window_id.clone(),
+            window_index: pane.window_index,
             diff: None,
             stalled: false,
             inferred: true,
@@ -675,7 +679,7 @@ fn live_panes() -> Result<Vec<LivePane>> {
     Ok(output
         .lines()
         .filter_map(|line| {
-            let fields: Vec<&str> = line.splitn(11, '\t').collect();
+            let fields: Vec<&str> = line.splitn(12, '\t').collect();
             let [
                 pane_id,
                 pid,
@@ -685,6 +689,7 @@ fn live_panes() -> Result<Vec<LivePane>> {
                 attached,
                 path,
                 window_id,
+                window_index,
                 host,
                 window_name,
                 title,
@@ -699,6 +704,7 @@ fn live_panes() -> Result<Vec<LivePane>> {
                 path: path.to_string(),
                 window_id: window_id.to_string(),
                 window_name: window_name.to_string(),
+                window_index: window_index.parse().ok()?,
                 title: if title == host { "" } else { title }.to_string(),
                 viewed: pane_active == "1" && window_active == "1" && attached != "0",
             })

@@ -132,7 +132,7 @@ Run any plugin with `--help` for every option.
 Lists AI coding agents running in tmux panes. Claude Code, Codex and Antigravity report their status through hooks (`tmux-aside-agents setup claude`, `setup codex`, `setup agy`); panes running `claude`, `codex` or `agy` (Antigravity) are listed even before a hook reports them, and other agents can be found by their command with `--detect`. Each row names the agent (`CC`, `Codex`, `Agy`, or the command of a detected one), followed by its pane title (`CC: Fix the login flow`). Runs best with `mode: stream`.
 
 - `--group project|none`: a group per project, or one list ordered by status across projects.
-- `--sort priority|alphabetical`: priority puts agents waiting for you first.
+- `--sort priority|alphabetical|window`: priority puts agents waiting for you first; window follows the order of the tmux windows, so `tmux move-window` reorders the list.
 - `--diff`: lines the agent's branch adds and removes (`+12 -3`), committed or not.
 - `--stall-after 60s`: mark a working agent whose pane stopped changing (for example, after you interrupt it).
 - `--detect aider`: also list panes running `aider` as agents, working while their pane changes.

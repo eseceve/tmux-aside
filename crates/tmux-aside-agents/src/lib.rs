@@ -115,6 +115,9 @@ pub struct AgentState {
     /// tmux window the agent's pane is in.
     #[serde(default)]
     pub window_id: String,
+    /// Position of the agent's window in tmux, taken from the live pane.
+    #[serde(skip)]
+    pub window_index: u32,
     /// Lines changed on the agent's branch, when diff stats are shown.
     #[serde(skip)]
     pub diff: Option<Diff>,
@@ -190,6 +193,7 @@ pub struct LivePane {
     pub path: String,
     pub window_id: String,
     pub window_name: String,
+    pub window_index: u32,
     /// The pane is the one a user is currently looking at.
     pub viewed: bool,
 }
@@ -199,6 +203,8 @@ pub enum Sort {
     /// Waiting, then done, then working, then idle agents.
     Priority,
     Alphabetical,
+    /// The order of the windows in tmux, so moving a window moves its agent.
+    Window,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,6 +238,7 @@ pub fn reconcile(states: Vec<AgentState>, live: &[LivePane]) -> Reconciliation {
         state.title = pane.title.clone();
         state.workdir = pane.path.clone();
         state.window_id = pane.window_id.clone();
+        state.window_index = pane.window_index;
         if pane.viewed && matches!(state.status, Some(Status::Waiting | Status::Done)) {
             state.status = None;
             result.acknowledged.push(state.pane_id.clone());
@@ -266,6 +273,7 @@ pub fn rows(
                 .cmp(&priority(b.status))
                 .then_with(|| a.window.cmp(&b.window)),
             Sort::Alphabetical => a.window.cmp(&b.window),
+            Sort::Window => a.window_index.cmp(&b.window_index),
         })
     });
     agents
