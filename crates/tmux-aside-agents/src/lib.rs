@@ -257,22 +257,25 @@ pub fn infer_status(previous: Option<Status>, active: bool, viewed: bool) -> Opt
     }
 }
 
-/// The agent to jump to from the pane `current`: agents in one of `statuses` are ordered by
-/// how long they have been in it, longest first, and the one after `current` is picked when
-/// `current` is among them, else the first, so repeated jumps cycle through all of them.
+/// The agent to jump to from the pane `current`: agents in the first of `statuses` that has
+/// any are ordered by how long they have been in it, longest first, and the one after
+/// `current` is picked when `current` is among them, else the first, so repeated jumps cycle
+/// through all of them.
 pub fn next_agent<'a>(
     agents: &'a [AgentState],
     statuses: &[Status],
     current: &str,
 ) -> Option<&'a AgentState> {
-    let mut candidates: Vec<&AgentState> = agents
+    let mut candidates: Vec<&AgentState> = statuses
         .iter()
-        .filter(|agent| {
-            agent
-                .status
-                .is_some_and(|status| statuses.contains(&status))
+        .map(|&status| {
+            agents
+                .iter()
+                .filter(|agent| agent.status == Some(status))
+                .collect::<Vec<_>>()
         })
-        .collect();
+        .find(|in_status| !in_status.is_empty())
+        .unwrap_or_default();
     candidates.sort_by(|a, b| {
         a.status_ts
             .cmp(&b.status_ts)

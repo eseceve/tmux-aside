@@ -69,7 +69,14 @@ enum Command {
     Register,
     /// Switch to the next agent in STATUS, longest waiting first, cycling on repeated calls
     Next {
-        #[arg(long, value_name = "STATUS", value_enum, default_value = "waiting")]
+        /// Statuses in order of preference: the first one any agent is in is used
+        #[arg(
+            long,
+            value_name = "STATUS",
+            value_enum,
+            value_delimiter = ',',
+            default_value = "waiting,done"
+        )]
         status: Vec<NotifyStatus>,
     },
     /// Print the agents that hooks registered: pane, status, project, window and title

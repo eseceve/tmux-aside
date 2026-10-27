@@ -55,7 +55,7 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
    | Action | Keys offered |
    |---|---|
    | Toggle the sidebar | `prefix + B`, `S`, `e` |
-   | Jump to the agent waiting the longest | `prefix + W`, `N`, `G` |
+   | Jump to the agent waiting (or done) the longest | `prefix + W`, `N`, `G` |
    | Reload the config | `prefix + R`, `O`, `Q` |
 
    The bindings go to a marked block in your tmux config, which a later run replaces, and take effect right away when run inside tmux. For Claude Code it runs `tmux-aside-agents setup claude` (status hooks) and `tmux-aside-usage setup claude` (wraps your `statusLine` to record plan usage), which keep a `settings.json.bak` copy and apply to sessions started afterwards. For Codex it runs `tmux-aside-agents setup codex`, which merges the status hooks into `~/.codex/hooks.json` (or `$CODEX_HOME`); Codex skips new hooks until you trust them with `/hooks`. For Antigravity it runs `tmux-aside-agents setup agy`, which adds them to `~/.gemini/config/hooks.json`; agy reports working and done, but no hook tells when it waits for you. Pass `--yes` to take the first key of each action and every hook, or give them as flags (`--toggle`, `--next`, `--reload`, `--hooks claude,codex,agy`, `--no-hooks`; `-` leaves an action unbound).
@@ -136,7 +136,7 @@ Lists AI coding agents running in tmux panes. Claude Code, Codex and Antigravity
 - `--stall-after 60s`: mark a working agent whose pane stopped changing (for example, after you interrupt it).
 - `--detect aider`: also list panes running `aider` as agents, working while their pane changes.
 - `--notify waiting --notify done --notify-via tmux --notify-via desktop`: notify when an agent needs you, unless you are looking at it.
-- `tmux-aside-agents next [--status waiting]`: switch to the agent waiting the longest; call it again to cycle.
+- `tmux-aside-agents next [--status waiting,done]`: switch to the agent waiting the longest, or to the one done the longest when none waits; call it again to cycle. `--status` lists statuses in order of preference.
 - `tmux-aside-agents list [--json]`: print each agent's pane, status, project, window and title, or their full state as JSON, for scripts and for an agent that coordinates others.
 - Keys on a row: `enter` jumps to the agent, `p` opens its pull request.
 

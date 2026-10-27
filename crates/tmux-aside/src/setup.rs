@@ -38,7 +38,7 @@ impl Action {
     fn description(self) -> &'static str {
         match self {
             Action::Toggle => "Toggle the sidebar",
-            Action::Next => "Jump to the agent waiting the longest",
+            Action::Next => "Jump to the agent waiting (or done) the longest",
             Action::Reload => "Reload the config",
         }
     }

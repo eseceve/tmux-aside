@@ -40,7 +40,7 @@ enum Command {
         /// Key that toggles the sidebar, as written after bind-key ("-" leaves it unbound)
         #[arg(long, allow_hyphen_values = true)]
         toggle: Option<String>,
-        /// Key that jumps to the agent waiting the longest
+        /// Key that jumps to the agent waiting the longest, or done when none waits
         #[arg(long, allow_hyphen_values = true)]
         next: Option<String>,
         /// Key that reloads the config

@@ -632,8 +632,25 @@ fn jumps_go_to_the_longest_waiting_agent_and_cycle_from_there() {
     assert_eq!(next(&[Status::Waiting], "%3"), Some("%2"));
     assert_eq!(next(&[Status::Waiting], "%2"), Some("%1"));
     assert_eq!(next(&[Status::Waiting], "%1"), Some("%2"));
-    assert_eq!(next(&[Status::Waiting, Status::Done], "%4"), Some("%1"));
+    assert_eq!(next(&[Status::Waiting, Status::Done], "%4"), Some("%2"));
     assert_eq!(next(&[], "%1"), None);
+}
+
+#[test]
+fn jumps_fall_back_to_the_next_status_when_none_is_in_the_first() {
+    let agents = vec![
+        state("%1", "api", "w1", Some(Status::Done), 30),
+        state("%2", "api", "w2", Some(Status::Done), 10),
+        state("%3", "api", "w3", Some(Status::Working), 0),
+    ];
+    let next = |current| {
+        next_agent(&agents, &[Status::Waiting, Status::Done], current)
+            .map(|agent| agent.pane_id.as_str())
+    };
+
+    assert_eq!(next("%3"), Some("%2"));
+    assert_eq!(next("%2"), Some("%1"));
+    assert_eq!(next("%1"), Some("%2"));
 }
 
 #[test]
