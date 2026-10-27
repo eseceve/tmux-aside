@@ -95,19 +95,24 @@ pub fn expected_width(window_width: u16) -> Result<u16> {
     Ok(resolve_width(configured_width()?, window_width))
 }
 
-/// Kills sidebars left alone in their window, which closes that window.
+/// Kills sidebars left alone in their window, which closes that window, and gives the
+/// others back their width after a closed neighbor handed them its space.
 pub fn reap() -> Result<()> {
     let panes = tmux::run(&[
         "list-panes",
         "-a",
         "-F",
-        &format!("#{{window_panes}} #{{?{ROLE_OPTION},#{{pane_id}},}}"),
+        &format!("#{{?{ROLE_OPTION},#{{window_panes}} #{{window_id}} #{{pane_id}},}}"),
     ])?;
     for line in panes.lines() {
-        if let Some(("1", pane_id)) = line.split_once(' ')
-            && !pane_id.is_empty()
-        {
-            let _ = tmux::run(&["kill-pane", "-t", pane_id]);
+        match line.split(' ').collect::<Vec<_>>()[..] {
+            ["1", _, pane_id] => {
+                let _ = tmux::run(&["kill-pane", "-t", pane_id]);
+            }
+            [_, window_id, _] => {
+                let _ = sync_window(window_id);
+            }
+            _ => {}
         }
     }
     Ok(())

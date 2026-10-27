@@ -188,6 +188,33 @@ fn dragging_a_sidebar_with_an_explicit_width_snaps_it_back() {
 }
 
 #[test]
+fn closing_the_pane_next_to_the_sidebar_keeps_the_sidebar_width() {
+    let server = TmuxServer::start(1);
+    server.aside(&["on"]);
+    server.wait_until("client running", |server| {
+        server
+            .sidebars()
+            .iter()
+            .all(|pane| server.capture(&pane.pane_id).contains("Fixture"))
+    });
+    let neighbor = server
+        .panes()
+        .into_iter()
+        .find(|pane| !pane.is_sidebar)
+        .unwrap();
+    server.tmux(&["split-window", "-h", "-d", "-t", &neighbor.pane_id]);
+
+    server.tmux(&["kill-pane", "-t", &neighbor.pane_id]);
+
+    server.wait_until("sidebar back to its width", |server| {
+        server.sidebars()[0].width == 25
+    });
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    assert_eq!(server.sidebars()[0].width, 25);
+    assert!(!server.home.path("state/tmux-aside/settings.json").exists());
+}
+
+#[test]
 fn a_dragged_width_survives_turning_the_sidebar_off_and_on() {
     let server = TmuxServer::start(1);
     server.aside(&["on"]);
