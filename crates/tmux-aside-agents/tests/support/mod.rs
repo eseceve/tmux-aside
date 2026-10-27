@@ -127,6 +127,7 @@ impl Tmux {
         command
             .env("TMUX", format!("{},0,0", self.socket))
             .env("XDG_STATE_HOME", self.dir.join("state"))
+            .env("TMUX_ASIDE_LANG", "en")
             .env(
                 "PATH",
                 format!(

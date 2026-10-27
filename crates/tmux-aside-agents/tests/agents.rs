@@ -1,10 +1,11 @@
 use std::collections::HashMap;
+use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{Row, Tone};
 
 use serde_json::json;
 use tmux_aside_agents::{
     AgentState, Branch, Checks, Diff, Grouping, LivePane, PullRequest, RowOptions, Sort, Status,
-    checks_from_rollup, entered, format_elapsed, infer_status, next_agent, notification,
+    checks_from_rollup, entered, format_elapsed, infer_status, messages, next_agent, notification,
     parse_shortstat, pull_requests_by_branch, reconcile, rows, waits_for_background_agents,
 };
 
@@ -46,6 +47,7 @@ fn options(sort: Sort, elapsed: bool) -> RowOptions {
         sort,
         elapsed,
         group: Grouping::Project,
+        language: Language::En,
     }
 }
 
@@ -612,7 +614,7 @@ fn notifications_fill_the_template_with_the_agent() {
     };
 
     assert_eq!(
-        notification("{project}/{window} {status}: {title}", &agent),
+        notification("{project}/{window} {status}: {title}", &agent, Language::En),
         "api/fix/login waiting: Fix the login"
     );
 }
@@ -771,4 +773,45 @@ fn rows_name_the_agent_tool_and_skip_a_title_that_repeats_the_project() {
         .collect();
 
     assert_eq!(lines, [["api", "Codex"], ["api", "Agy"], ["api", "aider"]]);
+}
+
+#[test]
+fn spanish_rows_name_the_stall_and_the_actions_in_spanish() {
+    let agent = AgentState {
+        stalled: true,
+        ..state("%1", "api", "w", Some(Status::Working), 0)
+    };
+    let options = RowOptions {
+        language: Language::Es,
+        ..options(Sort::Priority, false)
+    };
+
+    let row = rows(&[agent], 0, options, &HashMap::new()).remove(0);
+
+    assert_eq!(row.detail.as_deref(), Some("detenido"));
+    assert_eq!(row.actions[0].label.as_deref(), Some("ir al agente"));
+}
+
+#[test]
+fn spanish_notifications_name_the_status_in_spanish() {
+    let agent = state("%1", "api", "fix", Some(Status::Done), 0);
+
+    assert_eq!(
+        notification("{window}: {status}", &agent, Language::Es),
+        "fix: listo"
+    );
+}
+
+#[test]
+fn next_says_which_statuses_had_no_agents_in_each_language() {
+    let statuses = [Status::Waiting, Status::Done];
+
+    assert_eq!(
+        (messages(Language::En).no_agents_in)(&statuses),
+        "no waiting or done agents"
+    );
+    assert_eq!(
+        (messages(Language::Es).no_agents_in)(&statuses),
+        "sin agentes esperando o listos"
+    );
 }

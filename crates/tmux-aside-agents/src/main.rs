@@ -8,11 +8,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{Value, json};
+use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage, Row, Tone};
 use tmux_aside_agents::{
     AgentState, Branch, Diff, Grouping, LivePane, RowOptions, Sort, Status, entered, infer_status,
-    next_agent, notification, parse_shortstat, project_name, pull_requests_by_branch, reconcile,
-    rows, waits_for_background_agents,
+    messages, next_agent, notification, parse_shortstat, project_name, pull_requests_by_branch,
+    reconcile, rows, waits_for_background_agents,
 };
 
 const POLL: Duration = Duration::from_secs(1);
@@ -163,6 +164,7 @@ fn main() -> ExitCode {
                     GroupArg::Project => Grouping::Project,
                     GroupArg::None => Grouping::None,
                 },
+                language: Language::from_env(),
             },
             Notify {
                 statuses: statuses(cli.notify),
@@ -204,13 +206,8 @@ fn jump(statuses: &[Status]) -> Result<()> {
     match next_agent(&agents, statuses, &current) {
         Some(agent) => tmux(&["switch-client", "-t", &agent.pane_id]).map(drop),
         None => {
-            let names: Vec<&str> = statuses.iter().map(|status| status.name()).collect();
-            tmux(&[
-                "display-message",
-                "-l",
-                &format!("no {} agents", names.join(" or ")),
-            ])
-            .map(drop)
+            let message = (messages(Language::detect()).no_agents_in)(statuses);
+            tmux(&["display-message", "-l", &message]).map(drop)
         }
     }
 }
@@ -441,7 +438,10 @@ fn run_plugin(
                 }
                 if let Some(seen) = &seen {
                     for agent in entered(seen, &agents, &notify.statuses) {
-                        send_notification(&notify.via, notification(&notify.message, agent));
+                        send_notification(
+                            &notify.via,
+                            notification(&notify.message, agent, options.language),
+                        );
                     }
                 }
                 seen = Some(
@@ -451,14 +451,14 @@ fn run_plugin(
                         .collect(),
                 );
                 let rows = if agents.is_empty() {
-                    let mut placeholder = Row::new("no agents");
+                    let mut placeholder = Row::new(messages(options.language).no_agents);
                     placeholder.tone = Tone::Muted;
                     vec![placeholder]
                 } else {
                     rows(&agents, now, options, &current)
                 };
                 let line = serde_json::to_string(&PluginMessage::Snapshot {
-                    title: Some("Agents".to_string()),
+                    title: Some(messages(options.language).title.to_string()),
                     rows,
                 })?;
                 if line != last {

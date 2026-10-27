@@ -3,6 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{Action, Row, Tone};
 
 /// What an agent is doing, as reported by its hooks.
@@ -15,12 +16,82 @@ pub enum Status {
 }
 
 impl Status {
+    /// The name used on the command line and in `list` output.
     pub fn name(self) -> &'static str {
         match self {
             Status::Working => "working",
             Status::Waiting => "waiting",
             Status::Done => "done",
         }
+    }
+
+    /// The name shown to the user in `language`.
+    pub fn label(self, language: Language) -> &'static str {
+        let messages = messages(language);
+        match self {
+            Status::Working => messages.working,
+            Status::Waiting => messages.waiting,
+            Status::Done => messages.done,
+        }
+    }
+}
+
+/// Text the agents section and its notifications show, in one language.
+pub struct Messages {
+    pub title: &'static str,
+    pub no_agents: &'static str,
+    /// Told when `next` finds no agent in any of the statuses.
+    pub no_agents_in: fn(&[Status]) -> String,
+    pub working: &'static str,
+    pub waiting: &'static str,
+    pub done: &'static str,
+    pub stalled: &'static str,
+    pub go_to_agent: &'static str,
+    pub open_pull_request: &'static str,
+}
+
+const EN: Messages = Messages {
+    title: "Agents",
+    no_agents: "no agents",
+    no_agents_in: |statuses| {
+        let names: Vec<&str> = statuses.iter().map(|status| status.name()).collect();
+        format!("no {} agents", names.join(" or "))
+    },
+    working: "working",
+    waiting: "waiting",
+    done: "done",
+    stalled: "stalled",
+    go_to_agent: "go to the agent",
+    open_pull_request: "open its pull request",
+};
+
+const ES: Messages = Messages {
+    title: "Agentes",
+    no_agents: "sin agentes",
+    no_agents_in: |statuses| {
+        let names: Vec<&str> = statuses
+            .iter()
+            .map(|status| match status {
+                Status::Working => "trabajando",
+                Status::Waiting => "esperando",
+                Status::Done => "listos",
+            })
+            .collect();
+        format!("sin agentes {}", names.join(" o "))
+    },
+    working: "trabajando",
+    waiting: "esperando",
+    done: "listo",
+    stalled: "detenido",
+    go_to_agent: "ir al agente",
+    open_pull_request: "abrir su pull request",
+};
+
+/// The agents section's text in `language`.
+pub fn messages(language: Language) -> &'static Messages {
+    match language {
+        Language::En => &EN,
+        Language::Es => &ES,
     }
 }
 
@@ -96,6 +167,7 @@ pub struct RowOptions {
     /// Show the time spent in the current status when the agent has no pull request.
     pub elapsed: bool,
     pub group: Grouping,
+    pub language: Language,
 }
 
 /// Whether agents are listed under a line per project or in one list.
@@ -198,15 +270,7 @@ pub fn rows(
     });
     agents
         .into_iter()
-        .map(|agent| {
-            row(
-                agent,
-                now,
-                options.elapsed,
-                grouped,
-                branches.get(&agent.pane_id),
-            )
-        })
+        .map(|agent| row(agent, now, options, grouped, branches.get(&agent.pane_id)))
         .collect()
 }
 
@@ -288,11 +352,15 @@ pub fn next_agent<'a>(
     candidates.get(after % candidates.len().max(1)).copied()
 }
 
-/// Fills `{window}`, `{status}`, `{project}` and `{title}` in `template` with `agent`'s values.
-pub fn notification(template: &str, agent: &AgentState) -> String {
+/// Fills `{window}`, `{status}`, `{project}` and `{title}` in `template` with `agent`'s values,
+/// the status named in `language`.
+pub fn notification(template: &str, agent: &AgentState, language: Language) -> String {
     template
         .replace("{window}", clean_title(&agent.window))
-        .replace("{status}", agent.status.map_or("", Status::name))
+        .replace(
+            "{status}",
+            agent.status.map_or("", |status| status.label(language)),
+        )
         .replace("{project}", &group_name(agent))
         .replace("{title}", clean_title(&agent.title))
 }
@@ -378,7 +446,14 @@ pub fn format_elapsed(seconds: u64) -> String {
     }
 }
 
-fn row(agent: &AgentState, now: u64, elapsed: bool, grouped: bool, branch: Option<&Branch>) -> Row {
+fn row(
+    agent: &AgentState,
+    now: u64,
+    options: RowOptions,
+    grouped: bool,
+    branch: Option<&Branch>,
+) -> Row {
+    let messages = messages(options.language);
     let bar_tone = match agent.status {
         Some(Status::Working) if agent.stalled => Tone::Danger,
         Some(Status::Working) => Tone::Accent,
@@ -414,11 +489,13 @@ fn row(agent: &AgentState, now: u64, elapsed: bool, grouped: bool, branch: Optio
     let elapsed_time = || format_elapsed(now.saturating_sub(agent.status_ts));
     let pr = branch.and_then(|branch| branch.pr.as_ref());
     let (detail, detail_tone) = match (agent.status, pr) {
-        (Some(Status::Working), _) if agent.stalled => (Some("stalled".to_string()), Tone::Danger),
+        (Some(Status::Working), _) if agent.stalled => {
+            (Some(messages.stalled.to_string()), Tone::Danger)
+        }
         (Some(Status::Working), _) => (Some("spinner".to_string()), Tone::Accent),
         (Some(Status::Waiting), _) => (Some(elapsed_time()), Tone::Muted),
         (_, Some(pr)) => pull_request_detail(pr),
-        (_, None) => (elapsed.then(elapsed_time), Tone::Muted),
+        (_, None) => (options.elapsed.then(elapsed_time), Tone::Muted),
     };
     Row {
         bar_tone,
@@ -428,11 +505,11 @@ fn row(agent: &AgentState, now: u64, elapsed: bool, grouped: bool, branch: Optio
         detail,
         detail_tone,
         actions: std::iter::once(Action {
-            label: Some("go to the agent".to_string()),
+            label: Some(messages.go_to_agent.to_string()),
             ..Action::new("enter", &["tmux", "switch-client", "-t", &agent.pane_id])
         })
         .chain(pr.map(|pr| Action {
-            label: Some("open its pull request".to_string()),
+            label: Some(messages.open_pull_request.to_string()),
             cwd: (!agent.workdir.is_empty()).then(|| agent.workdir.clone()),
             ..Action::new("p", &["gh", "pr", "view", "--web", &pr.number.to_string()])
         }))
