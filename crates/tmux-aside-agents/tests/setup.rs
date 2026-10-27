@@ -79,6 +79,7 @@ fn creates_settings_with_every_status_hook() {
     let expected = [
         ("SessionStart", "register"),
         ("UserPromptSubmit", "set-status working"),
+        ("PermissionRequest", "set-status waiting"),
         ("Notification", "set-status waiting"),
         ("PostToolUse", "set-status working"),
         ("Stop", "set-status done"),

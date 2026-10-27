@@ -726,13 +726,14 @@ fn now() -> u64 {
         .unwrap_or_default()
 }
 
-const CLAUDE_HOOKS: [(&str, Option<&str>, &str); 5] = [
+const CLAUDE_HOOKS: [(&str, Option<&str>, &str); 6] = [
     (
         "SessionStart",
         Some("startup|resume|clear|fork"),
         "register",
     ),
     ("UserPromptSubmit", None, "set-status working"),
+    ("PermissionRequest", None, "set-status waiting"),
     (
         "Notification",
         Some("permission_prompt|elicitation_dialog"),
