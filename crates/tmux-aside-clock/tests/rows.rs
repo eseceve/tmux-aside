@@ -1,7 +1,8 @@
 use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{Row, Tone};
-use tmux_aside_clock::{Sort, rows};
+use tmux_aside_clock::{Sort, rows, summary};
 
 fn at(instant: &str) -> Timestamp {
     instant.parse().unwrap()
@@ -135,4 +136,13 @@ fn spanish_clocks_use_the_24_hour_time() {
     .unwrap();
 
     assert_eq!(rows[0], clock("Chile", "17:05"));
+}
+
+#[test]
+fn the_summary_is_the_time_in_the_local_zone_in_the_sidebar_language() {
+    let santiago = TimeZone::get("America/Santiago").unwrap();
+    let now = at("2026-10-27T17:20:00Z");
+
+    assert_eq!(summary(now, &santiago, Language::Es), "14:20");
+    assert_eq!(summary(now, &santiago, Language::En), "2:20 PM");
 }

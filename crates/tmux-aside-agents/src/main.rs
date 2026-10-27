@@ -459,6 +459,7 @@ fn run_plugin(
                 };
                 let line = serde_json::to_string(&PluginMessage::Snapshot {
                     title: Some(messages(options.language).title.to_string()),
+                    summary: None,
                     rows,
                 })?;
                 if line != last {

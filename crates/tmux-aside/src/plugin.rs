@@ -26,6 +26,7 @@ const STABLE_STREAM: Duration = Duration::from_secs(5);
 pub struct Update {
     pub section: usize,
     pub title: String,
+    pub summary: Option<String>,
     pub rows: Vec<Row>,
 }
 
@@ -137,9 +138,11 @@ impl Supervisor {
                     greeted = true;
                 }
                 Ok(line) => match parse_message(&line, self.language) {
-                    Ok(PluginMessage::Snapshot { title, rows }) => {
-                        publish(self.update(title, rows))
-                    }
+                    Ok(PluginMessage::Snapshot {
+                        title,
+                        summary,
+                        rows,
+                    }) => publish(self.update(title, summary, rows)),
                     Ok(_) => {}
                     Err(error) => publish(self.error(error)),
                 },
@@ -230,26 +233,32 @@ impl Supervisor {
         expect_hello(lines.next(), self.language)?;
         let mut update = None;
         for line in lines {
-            if let PluginMessage::Snapshot { title, rows } = parse_message(line, self.language)? {
-                update = Some(self.update(title, rows));
+            if let PluginMessage::Snapshot {
+                title,
+                summary,
+                rows,
+            } = parse_message(line, self.language)?
+            {
+                update = Some(self.update(title, summary, rows));
             }
         }
         update.ok_or_else(|| anyhow!(self.language.messages().no_snapshot))
     }
 
-    fn update(&self, title: Option<String>, rows: Vec<Row>) -> Update {
+    fn update(&self, title: Option<String>, summary: Option<String>, rows: Vec<Row>) -> Update {
         Update {
             section: self.index,
             title: match &self.section.title {
                 Some(template) => title::expand(template, self.language),
                 None => title.unwrap_or_else(|| self.name.clone()),
             },
+            summary,
             rows,
         }
     }
 
     fn error(&self, error: anyhow::Error) -> Update {
-        self.update(None, vec![Row::new(format!("! {error:#}"))])
+        self.update(None, None, vec![Row::new(format!("! {error:#}"))])
     }
 
     fn timed_out(&self) -> String {

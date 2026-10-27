@@ -90,6 +90,20 @@ fn long_text_is_truncated_with_an_ellipsis_and_keeps_its_detail() {
 }
 
 #[test]
+fn collapsed_sections_show_their_summary_next_to_the_title() {
+    let summarized = Section {
+        summary: Some("14:20".to_string()),
+        counts: false,
+        ..Section::new("Martes 27", vec![Row::new("Chile")], None)
+    };
+    let mut view = View::new(vec![summarized]);
+
+    assert_eq!(texts(&view, 30, 1), ["───────── Martes 27 ──────────"]);
+    view.apply(Key::Toggle);
+    assert_eq!(texts(&view, 30, 1), ["──── ▸ Martes 27 · 14:20 ─────"]);
+}
+
+#[test]
 fn collapsed_sections_show_only_their_header() {
     let mut view = View::new(vec![prs()]);
     view.apply(Key::Toggle);

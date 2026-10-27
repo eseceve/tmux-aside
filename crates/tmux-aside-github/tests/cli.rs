@@ -76,7 +76,7 @@ fn prints_a_hello_and_a_snapshot_of_the_search() {
         messages[0],
         PluginMessage::Hello { protocol: 1, .. }
     ));
-    let PluginMessage::Snapshot { title, rows } = &messages[1] else {
+    let PluginMessage::Snapshot { title, rows, .. } = &messages[1] else {
         panic!("expected a snapshot");
     };
     assert_eq!(title.as_deref(), Some("Mine"));

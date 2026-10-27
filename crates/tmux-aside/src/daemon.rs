@@ -181,6 +181,9 @@ pub fn run(socket: &Path, idle_timeout: Duration) -> Result<()> {
             }
             Ok(Event::Section(generation, update)) if generation == plugins.generation => {
                 view.set_section(update.section, &update.title, update.rows);
+                if let Some(section) = view.sections.get_mut(update.section) {
+                    section.summary = update.summary;
+                }
                 clients.retain(|_, stream| send(stream, &view).is_ok());
             }
             Ok(Event::Section(..)) => {}

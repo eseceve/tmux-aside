@@ -55,3 +55,19 @@ fn rows_accept_icons_groups_and_actions() {
         [Action::new("enter", &["tmux", "switch-client", "-t", "%3"])]
     );
 }
+
+#[test]
+fn snapshots_carry_an_optional_summary() {
+    let with: PluginMessage =
+        serde_json::from_str(r#"{"type":"snapshot","summary":"14:20","rows":[]}"#).unwrap();
+    let without: PluginMessage = serde_json::from_str(r#"{"type":"snapshot","rows":[]}"#).unwrap();
+
+    let PluginMessage::Snapshot { summary, .. } = with else {
+        panic!("expected a snapshot");
+    };
+    assert_eq!(summary.as_deref(), Some("14:20"));
+    let PluginMessage::Snapshot { summary, .. } = without else {
+        panic!("expected a snapshot");
+    };
+    assert_eq!(summary, None);
+}

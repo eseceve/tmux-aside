@@ -124,6 +124,7 @@ fn run_plugin(codex_interval: Duration, only_running: bool) -> Result<()> {
     })?;
     print(&PluginMessage::Snapshot {
         title: Some(messages(language).title.to_string()),
+        summary: None,
         rows,
     })
 }

@@ -29,6 +29,13 @@ pub fn messages(language: Language) -> &'static Messages {
     }
 }
 
+/// The time in `zone` at `now`, shown next to the title while the section is collapsed.
+pub fn summary(now: Timestamp, zone: &TimeZone, language: Language) -> String {
+    now.to_zoned(zone.clone())
+        .strftime(messages(language).time)
+        .to_string()
+}
+
 /// Order of the clocks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Sort {

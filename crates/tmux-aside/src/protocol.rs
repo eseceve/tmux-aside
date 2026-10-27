@@ -58,6 +58,9 @@ pub enum PluginMessage {
     Snapshot {
         #[serde(default)]
         title: Option<String>,
+        /// Short text shown next to the title while the section is collapsed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
         rows: Vec<Row>,
     },
     #[serde(other)]

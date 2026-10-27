@@ -29,7 +29,7 @@ Messages are JSON objects, one per line, with a `type`. The current protocol ver
 {"type":"snapshot","title":"Weather","rows":[{"text":"Lisbon","detail":"21°C"}]}
 ```
 
-Each snapshot replaces the whole section. Unknown message types and fields are ignored in both directions, so later versions can add fields without breaking older plugins.
+Each snapshot replaces the whole section. An optional `summary` is shown next to the title while the section is collapsed, such as the local time for a clock: `{"type":"snapshot","summary":"14:20","rows":[...]}`. Unknown message types and fields are ignored in both directions, so later versions can add fields without breaking older plugins.
 
 ### Modes
 

@@ -77,6 +77,7 @@ fn run(cli: Cli) -> Result<()> {
     })?;
     print(&PluginMessage::Snapshot {
         title: Some(cli.title.unwrap_or_else(|| messages.title.to_string())),
+        summary: None,
         rows,
     })
 }

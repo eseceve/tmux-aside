@@ -58,6 +58,9 @@ pub enum Pin {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Section {
     pub title: String,
+    /// Shown next to the title while the section is collapsed.
+    #[serde(default)]
+    pub summary: Option<String>,
     pub rows: Vec<Row>,
     pub collapsed: bool,
     pub max_height: Option<usize>,
@@ -78,6 +81,7 @@ impl Section {
     pub fn new(title: &str, rows: Vec<Row>, max_height: Option<usize>) -> Self {
         Section {
             title: title.to_string(),
+            summary: None,
             rows,
             collapsed: false,
             max_height,

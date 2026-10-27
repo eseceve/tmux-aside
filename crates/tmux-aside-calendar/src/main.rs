@@ -75,6 +75,7 @@ fn run(cli: Cli) -> Result<()> {
     })?;
     print(&PluginMessage::Snapshot {
         title: Some(messages(language).title.to_string()),
+        summary: None,
         rows,
     })
 }

@@ -59,13 +59,15 @@ fn run(cli: Cli) -> Result<()> {
     };
     let local = TimeZone::system();
     let language = Language::from_env();
-    let rows = tmux_aside_clock::rows(Timestamp::now(), &zones, sort, local.iana_name(), language)?;
+    let now = Timestamp::now();
+    let rows = tmux_aside_clock::rows(now, &zones, sort, local.iana_name(), language)?;
     print(&PluginMessage::Hello {
         protocol: PLUGIN_PROTOCOL,
         features: vec![],
     })?;
     print(&PluginMessage::Snapshot {
         title: Some(tmux_aside_clock::messages(language).title.to_string()),
+        summary: Some(tmux_aside_clock::summary(now, &local, language)),
         rows,
     })
 }
