@@ -1,4 +1,5 @@
 use jiff::Timestamp;
+use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{Row, Tone};
 use tmux_aside_clock::{Sort, rows};
 
@@ -26,6 +27,7 @@ fn shows_labelled_clocks_sorted_alphabetically() {
         ]),
         Sort::Alphabetical,
         None,
+        Language::En,
     )
     .unwrap();
 
@@ -47,6 +49,7 @@ fn zones_without_a_label_show_their_city_name() {
         &specs(&["America/New_York"]),
         Sort::Alphabetical,
         None,
+        Language::En,
     )
     .unwrap();
 
@@ -60,6 +63,7 @@ fn an_unknown_zone_is_reported_by_name() {
         &specs(&["Mars/Olympus=Marte"]),
         Sort::Alphabetical,
         None,
+        Language::En,
     )
     .unwrap_err()
     .to_string();
@@ -74,6 +78,7 @@ fn afternoon_times_use_pm() {
         &specs(&["America/Santiago=Chile"]),
         Sort::Alphabetical,
         None,
+        Language::En,
     )
     .unwrap();
 
@@ -88,7 +93,7 @@ fn clocks_can_be_sorted_by_how_late_it_is() {
         "America/Caracas=Venezuela",
     ]);
     let order = |sort| -> Vec<String> {
-        rows(at("2026-10-26T13:00:00Z"), &zones, sort, None)
+        rows(at("2026-10-26T13:00:00Z"), &zones, sort, None, Language::En)
             .unwrap()
             .into_iter()
             .map(|row| row.text)
@@ -107,6 +112,7 @@ fn the_local_zone_is_highlighted() {
         &specs(&["America/Santiago=Chile", "America/Caracas=Venezuela"]),
         Sort::Given,
         Some("America/Santiago"),
+        Language::En,
     )
     .unwrap();
 
@@ -115,4 +121,18 @@ fn the_local_zone_is_highlighted() {
         tones,
         [(Tone::Accent, Tone::Accent), (Tone::Plain, Tone::Plain)]
     );
+}
+
+#[test]
+fn spanish_clocks_use_the_24_hour_time() {
+    let rows = rows(
+        at("2026-10-23T20:05:00Z"),
+        &specs(&["America/Santiago=Chile"]),
+        Sort::Alphabetical,
+        None,
+        Language::Es,
+    )
+    .unwrap();
+
+    assert_eq!(rows[0], clock("Chile", "17:05"));
 }

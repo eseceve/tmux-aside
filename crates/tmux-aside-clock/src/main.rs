@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
+use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
 use tmux_aside_clock::Sort;
 
@@ -57,13 +58,14 @@ fn run(cli: Cli) -> Result<()> {
         SortArg::Given => Sort::Given,
     };
     let local = TimeZone::system();
-    let rows = tmux_aside_clock::rows(Timestamp::now(), &zones, sort, local.iana_name())?;
+    let language = Language::from_env();
+    let rows = tmux_aside_clock::rows(Timestamp::now(), &zones, sort, local.iana_name(), language)?;
     print(&PluginMessage::Hello {
         protocol: PLUGIN_PROTOCOL,
         features: vec![],
     })?;
     print(&PluginMessage::Snapshot {
-        title: Some("Clocks".to_string()),
+        title: Some(tmux_aside_clock::messages(language).title.to_string()),
         rows,
     })
 }
