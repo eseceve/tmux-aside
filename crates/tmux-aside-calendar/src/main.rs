@@ -4,8 +4,9 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::Parser;
 use jiff::Zoned;
+use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
-use tmux_aside_calendar::{Event, Options, rows, without_emoji};
+use tmux_aside_calendar::{Event, Options, messages, rows, without_emoji};
 
 /// Sidebar section listing upcoming events from the macOS Calendar, which syncs Google,
 /// iCloud and Exchange accounts.
@@ -46,10 +47,11 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<()> {
+    let language = Language::from_env();
     let now = Zoned::now();
     let start = now.start_of_day()?;
     let end = start.checked_add(jiff::Span::new().days(i64::from(cli.days)))?;
-    let mut events = eventkit::events(start.timestamp(), end.timestamp(), &cli.calendar)?;
+    let mut events = eventkit::events(start.timestamp(), end.timestamp(), &cli.calendar, language)?;
     if cli.no_emoji {
         for event in &mut events {
             event.title = without_emoji(&event.title);
@@ -65,13 +67,14 @@ fn run(cli: Cli) -> Result<()> {
             all_day: cli.all_day,
             declined: cli.declined,
         },
+        language,
     );
     print(&PluginMessage::Hello {
         protocol: PLUGIN_PROTOCOL,
         features: vec![],
     })?;
     print(&PluginMessage::Snapshot {
-        title: Some("Calendar".to_string()),
+        title: Some(messages(language).title.to_string()),
         rows,
     })
 }
@@ -94,6 +97,7 @@ mod eventkit {
         EKAuthorizationStatus, EKEntityType, EKEvent, EKEventStore, EKParticipantStatus,
     };
     use objc2_foundation::{NSArray, NSDate, NSError};
+    use tmux_aside::i18n::Language;
 
     use super::Event;
 
@@ -101,13 +105,16 @@ mod eventkit {
 
     /// Occurrences of the events between `start` and `end`, asking for full calendar access
     /// the first time.
-    pub fn events(start: Timestamp, end: Timestamp, calendars: &[String]) -> Result<Vec<Event>> {
+    pub fn events(
+        start: Timestamp,
+        end: Timestamp,
+        calendars: &[String],
+        language: Language,
+    ) -> Result<Vec<Event>> {
         let store = unsafe { EKEventStore::new() };
         let status = unsafe { EKEventStore::authorizationStatusForEntityType(EKEntityType::Event) };
         if status != EKAuthorizationStatus::FullAccess && !request_access(&store)? {
-            bail!(
-                "no access to calendars: allow it in System Settings > Privacy & Security > Calendars"
-            );
+            bail!(tmux_aside_calendar::messages(language).no_access);
         }
         let selected: Vec<_> = unsafe { store.calendarsForEntityType(EKEntityType::Event) }
             .iter()
@@ -180,10 +187,16 @@ mod eventkit {
 mod eventkit {
     use anyhow::{Result, bail};
     use jiff::Timestamp;
+    use tmux_aside::i18n::Language;
 
     use super::Event;
 
-    pub fn events(_: Timestamp, _: Timestamp, _: &[String]) -> Result<Vec<Event>> {
-        bail!("the calendar section reads the macOS Calendar and only runs on macOS")
+    pub fn events(
+        _: Timestamp,
+        _: Timestamp,
+        _: &[String],
+        language: Language,
+    ) -> Result<Vec<Event>> {
+        bail!(tmux_aside_calendar::messages(language).macos_only)
     }
 }

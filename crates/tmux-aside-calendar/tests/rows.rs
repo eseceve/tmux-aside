@@ -1,5 +1,6 @@
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
+use tmux_aside::i18n::Language;
 use tmux_aside::protocol::Tone;
 use tmux_aside_calendar::{Event, Options, meeting_link, rows, without_emoji};
 
@@ -26,7 +27,7 @@ fn event(title: &str, start: &str, end: &str) -> Event {
 }
 
 fn summary(events: &[Event], now: &str) -> Vec<(String, String, Tone, Option<String>)> {
-    rows(events, at(now), &TimeZone::UTC, OPTIONS)
+    rows(events, at(now), &TimeZone::UTC, OPTIONS, Language::En)
         .into_iter()
         .map(|row| (row.text, row.detail.unwrap(), row.bar_tone, row.group))
         .collect()
@@ -89,10 +90,16 @@ fn all_day_and_declined_events_are_hidden_unless_asked_and_the_list_is_limited()
         event("Kept", "2026-10-26T18:00:00Z", "2026-10-26T19:00:00Z"),
     ];
     let titles = |options| -> Vec<String> {
-        rows(&events, at("2026-10-26T15:00:00Z"), &TimeZone::UTC, options)
-            .into_iter()
-            .map(|row| row.text)
-            .collect()
+        rows(
+            &events,
+            at("2026-10-26T15:00:00Z"),
+            &TimeZone::UTC,
+            options,
+            Language::En,
+        )
+        .into_iter()
+        .map(|row| row.text)
+        .collect()
     };
 
     assert_eq!(titles(OPTIONS), ["Kept"]);
@@ -129,6 +136,7 @@ fn enter_joins_the_call_when_there_is_one() {
         at("2026-10-26T10:00:00Z"),
         &TimeZone::UTC,
         OPTIONS,
+        Language::En,
     );
 
     assert_eq!(
@@ -164,4 +172,52 @@ fn emoji_can_be_removed_from_titles() {
     assert_eq!(without_emoji("🛡\u{fe0f} 🍱 Lunch"), "Lunch");
     assert_eq!(without_emoji("1:1 con Ana 👩‍💻"), "1:1 con Ana");
     assert_eq!(without_emoji("Daily standup"), "Daily standup");
+}
+
+#[test]
+fn rows_can_be_shown_in_spanish() {
+    let events = [
+        Event {
+            all_day: true,
+            ..event("Feriado", "2026-10-26T00:00:00Z", "2026-10-27T00:00:00Z")
+        },
+        Event {
+            link: Some("https://meet.google.com/abc-defg-hij".to_string()),
+            ..event("Foco", "2026-10-26T14:00:00Z", "2026-10-26T14:40:00Z")
+        },
+        event("Daily", "2026-10-26T14:30:00Z", "2026-10-26T14:45:00Z"),
+        event("Retro", "2026-10-27T10:00:00Z", "2026-10-27T11:00:00Z"),
+        event("Review", "2026-10-28T10:00:00Z", "2026-10-28T11:00:00Z"),
+    ];
+
+    let rows = rows(
+        &events,
+        at("2026-10-26T14:18:30Z"),
+        &TimeZone::UTC,
+        Options {
+            all_day: true,
+            ..OPTIONS
+        },
+        Language::Es,
+    );
+
+    let shown: Vec<(String, Option<String>)> = rows
+        .iter()
+        .map(|row| (row.detail.clone().unwrap(), row.group.clone()))
+        .collect();
+    let row = |detail: &str, group: Option<&str>| (detail.to_string(), group.map(str::to_string));
+    assert_eq!(
+        shown,
+        [
+            row("todo el día", None),
+            row("ahora–14:40", None),
+            row("en 12m–14:45", None),
+            row("10:00–11:00", Some("Mañana")),
+            row("10:00–11:00", Some("Miércoles 28")),
+        ]
+    );
+    assert_eq!(
+        rows[1].actions[0].label.as_deref(),
+        Some("unirse a la llamada")
+    );
 }

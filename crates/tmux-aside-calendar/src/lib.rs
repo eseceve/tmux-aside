@@ -1,5 +1,6 @@
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
+use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{Action, Row, Tone};
 
 const MEETING_HOSTS: [&str; 6] = [
@@ -10,6 +11,48 @@ const MEETING_HOSTS: [&str; 6] = [
     "webex.com",
     "whereby.com",
 ];
+
+/// Text the calendar section shows, in one language.
+pub struct Messages {
+    pub title: &'static str,
+    pub all_day: &'static str,
+    pub now_until: fn(&str) -> String,
+    pub in_minutes_until: fn(i64, &str) -> String,
+    pub tomorrow: &'static str,
+    pub join_call: &'static str,
+    pub no_access: &'static str,
+    pub macos_only: &'static str,
+}
+
+const EN: Messages = Messages {
+    title: "Calendar",
+    all_day: "all day",
+    now_until: |end| format!("now–{end}"),
+    in_minutes_until: |minutes, end| format!("in {minutes}m–{end}"),
+    tomorrow: "Tomorrow",
+    join_call: "join the call",
+    no_access: "no access to calendars: allow it in System Settings > Privacy & Security > Calendars",
+    macos_only: "the calendar section reads the macOS Calendar and only runs on macOS",
+};
+
+const ES: Messages = Messages {
+    title: "Calendario",
+    all_day: "todo el día",
+    now_until: |end| format!("ahora–{end}"),
+    in_minutes_until: |minutes, end| format!("en {minutes}m–{end}"),
+    tomorrow: "Mañana",
+    join_call: "unirse a la llamada",
+    no_access: "sin acceso a los calendarios: permítelo en Ajustes del Sistema > Privacidad y seguridad > Calendarios",
+    macos_only: "la sección de calendario lee el Calendario de macOS y solo funciona en macOS",
+};
+
+/// The calendar section's text in `language`.
+pub fn messages(language: Language) -> &'static Messages {
+    match language {
+        Language::En => &EN,
+        Language::Es => &ES,
+    }
+}
 
 /// One occurrence of a calendar event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,7 +81,15 @@ pub struct Options {
 /// later days are grouped by day. The right side shows when the event ends after `now` for an
 /// event in progress, a countdown for one starting within `options.soon` or its start time,
 /// as `in 12m–10:15`, and the bar is colored accordingly. Enter joins the video call when the event has one.
-pub fn rows(events: &[Event], now: Timestamp, tz: &TimeZone, options: Options) -> Vec<Row> {
+/// Text is written in `language`.
+pub fn rows(
+    events: &[Event],
+    now: Timestamp,
+    tz: &TimeZone,
+    options: Options,
+    language: Language,
+) -> Vec<Row> {
+    let messages = messages(language);
     let mut events: Vec<&Event> = events
         .iter()
         .filter(|event| event.end > now)
@@ -55,17 +106,20 @@ pub fn rows(events: &[Event], now: Timestamp, tz: &TimeZone, options: Options) -
             let end = event.end.to_zoned(tz.clone()).strftime("%H:%M");
             let until = event.start.as_second() - now.as_second();
             let (detail, tone) = match until {
-                _ if event.all_day => ("all day".to_string(), Tone::Muted),
-                ..=0 => (format!("now–{end}"), Tone::Accent),
-                until if until <= options.soon => {
-                    (format!("in {}m–{end}", (until + 59) / 60), Tone::Warning)
-                }
+                _ if event.all_day => (messages.all_day.to_string(), Tone::Muted),
+                ..=0 => ((messages.now_until)(&end.to_string()), Tone::Accent),
+                until if until <= options.soon => (
+                    (messages.in_minutes_until)((until + 59) / 60, &end.to_string()),
+                    Tone::Warning,
+                ),
                 _ => (format!("{}–{end}", start.strftime("%H:%M")), Tone::Muted),
             };
             let group = match start.date() {
                 date if date <= today => None,
-                date if date == today.tomorrow().unwrap_or(today) => Some("Tomorrow".to_string()),
-                _ => Some(start.strftime("%A %-d").to_string()),
+                date if date == today.tomorrow().unwrap_or(today) => {
+                    Some(messages.tomorrow.to_string())
+                }
+                date => Some(format!("{} {}", language.weekday(date), date.day())),
             };
             Row {
                 group,
@@ -75,7 +129,7 @@ pub fn rows(events: &[Event], now: Timestamp, tz: &TimeZone, options: Options) -
                     .link
                     .iter()
                     .map(|link| Action {
-                        label: Some("join the call".to_string()),
+                        label: Some(messages.join_call.to_string()),
                         ..Action::new("enter", &["open", link])
                     })
                     .collect(),
