@@ -22,6 +22,10 @@ impl AgentDir {
         Self::new("codex", "CODEX_HOME", "hooks.json")
     }
 
+    fn agy() -> Self {
+        Self::new("agy", "HOME", ".gemini/config/hooks.json")
+    }
+
     fn new(agent: &'static str, env: &'static str, file: &'static str) -> Self {
         let dir = std::env::temp_dir().join(format!(
             "tmux-aside-{agent}-{}-{}",
@@ -42,6 +46,7 @@ impl AgentDir {
     }
 
     fn write(&self, value: &Value) {
+        std::fs::create_dir_all(self.settings().parent().unwrap()).unwrap();
         std::fs::write(
             self.settings(),
             serde_json::to_string_pretty(value).unwrap(),
@@ -246,4 +251,48 @@ fn codex_hooks_are_added_after_the_existing_ones() {
             format!("'{}' set-status done", exe())
         ]
     );
+}
+
+#[test]
+fn agy_hooks_mark_working_and_done_and_answer_with_empty_json() {
+    let agy = AgentDir::agy();
+
+    agy.setup();
+
+    let hooks = &agy.read()["tmux-aside"];
+    for (event, arguments) in [
+        ("PreInvocation", "set-status working"),
+        ("Stop", "set-status done"),
+    ] {
+        assert_eq!(
+            hooks[event][0]["command"],
+            format!("'{}' {arguments} 2>/dev/null; printf '{{}}\\n'", exe()),
+            "{event}"
+        );
+    }
+    assert!(hooks.get("PreToolUse").is_none());
+    let output = Command::new("sh")
+        .args(["-c", hooks["Stop"][0]["command"].as_str().unwrap()])
+        .env_remove("TMUX_PANE")
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "{}\n");
+}
+
+#[test]
+fn agy_hooks_sit_next_to_other_hook_groups() {
+    let agy = AgentDir::agy();
+    let workmux =
+        json!({ "Stop": [{ "type": "command", "command": "workmux set-window-status done" }] });
+    agy.write(&json!({ "workmux-status": workmux }));
+
+    agy.setup();
+    let first = std::fs::read_to_string(agy.settings()).unwrap();
+    agy.setup();
+
+    assert_eq!(std::fs::read_to_string(agy.settings()).unwrap(), first);
+    let settings = agy.read();
+    assert_eq!(settings["workmux-status"], workmux);
+    let groups: Vec<&String> = settings.as_object().unwrap().keys().collect();
+    assert_eq!(groups, ["workmux-status", "tmux-aside"]);
 }

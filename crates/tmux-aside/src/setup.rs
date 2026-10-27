@@ -64,16 +64,18 @@ impl Action {
 pub enum Ai {
     Claude,
     Codex,
+    Agy,
 }
 
 impl Ai {
     /// Every AI with hooks support, in the order they are offered.
-    pub const ALL: [Ai; 2] = [Ai::Claude, Ai::Codex];
+    pub const ALL: [Ai; 3] = [Ai::Claude, Ai::Codex, Ai::Agy];
 
     fn description(self) -> &'static str {
         match self {
             Ai::Claude => "Claude Code: agent status and plan usage",
             Ai::Codex => "Codex: agent status",
+            Ai::Agy => "Antigravity: agent status",
         }
     }
 
@@ -81,6 +83,7 @@ impl Ai {
         match self {
             Ai::Claude => &[("agents", "claude"), ("usage", "claude")],
             Ai::Codex => &[("agents", "codex")],
+            Ai::Agy => &[("agents", "agy")],
         }
     }
 }

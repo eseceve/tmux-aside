@@ -728,6 +728,16 @@ fn a_stop_with_background_agents_running_is_not_done() {
 }
 
 #[test]
+fn an_antigravity_stop_that_is_not_fully_idle_is_not_done() {
+    assert!(waits_for_background_agents(
+        &json!({"terminationReason": "model_stop", "fullyIdle": false})
+    ));
+    assert!(!waits_for_background_agents(
+        &json!({"terminationReason": "model_stop", "fullyIdle": true})
+    ));
+}
+
+#[test]
 fn rows_name_the_agent_tool_and_skip_a_title_that_repeats_the_project() {
     let agents: Vec<AgentState> = [("%1", "codex"), ("%2", "agy"), ("%3", "aider")]
         .into_iter()

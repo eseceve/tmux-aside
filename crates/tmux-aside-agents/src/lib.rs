@@ -228,9 +228,12 @@ pub fn entered<'a>(
         .collect()
 }
 
-/// Whether a Claude Code `Stop` hook input lists subagents, workflows or teammates still
-/// running in the background, which wake the agent again when they finish.
+/// Whether a `Stop` hook input says background work will wake the agent again: Claude Code
+/// lists subagents, workflows or teammates still running, and Antigravity is not `fullyIdle`.
 pub fn waits_for_background_agents(stop_input: &Value) -> bool {
+    if stop_input.get("fullyIdle") == Some(&Value::Bool(false)) {
+        return true;
+    }
     stop_input
         .get("background_tasks")
         .and_then(Value::as_array)

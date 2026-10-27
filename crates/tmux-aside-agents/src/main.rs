@@ -85,6 +85,8 @@ enum SetupAgent {
     Claude,
     /// Merge the hooks into Codex's hooks.json ($CODEX_HOME or ~/.codex)
     Codex,
+    /// Add the hooks to Antigravity's ~/.gemini/config/hooks.json
+    Agy,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -758,29 +760,25 @@ const CODEX_HOOKS: [Hook; 5] = [
 ];
 
 fn setup(agent: SetupAgent) -> Result<()> {
-    let (env, default_dir, file, hooks, name, note) = match agent {
+    let (dir, file, name, note) = match agent {
         SetupAgent::Claude => (
-            "CLAUDE_CONFIG_DIR",
-            ".claude",
+            config_dir("CLAUDE_CONFIG_DIR", ".claude")?,
             "settings.json",
-            &CLAUDE_HOOKS[..],
             "Claude Code",
             "They take effect in new Claude Code sessions.",
         ),
         SetupAgent::Codex => (
-            "CODEX_HOME",
-            ".codex",
+            config_dir("CODEX_HOME", ".codex")?,
             "hooks.json",
-            &CODEX_HOOKS[..],
             "Codex",
             "Codex skips them until you trust them: run /hooks in a new Codex session.",
         ),
-    };
-    let dir = match std::env::var_os(env).filter(|dir| !dir.is_empty()) {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::home_dir()
-            .ok_or_else(|| anyhow!("cannot locate the home directory"))?
-            .join(default_dir),
+        SetupAgent::Agy => (
+            home_dir()?.join(".gemini").join("config"),
+            "hooks.json",
+            "Antigravity",
+            "They take effect in new agy sessions.",
+        ),
     };
     let path = dir.join(file);
     let existing = match std::fs::read_to_string(&path) {
@@ -800,12 +798,12 @@ fn setup(agent: SetupAgent) -> Result<()> {
     let exe = exe
         .to_str()
         .ok_or_else(|| anyhow!("executable path is not UTF-8"))?;
-    merge_hooks(
-        &mut settings,
-        file,
-        hooks,
-        &format!("'{}'", exe.replace('\'', "'\\''")),
-    )?;
+    let exe = format!("'{}'", exe.replace('\'', "'\\''"));
+    match agent {
+        SetupAgent::Claude => merge_hooks(&mut settings, file, &CLAUDE_HOOKS, &exe)?,
+        SetupAgent::Codex => merge_hooks(&mut settings, file, &CODEX_HOOKS, &exe)?,
+        SetupAgent::Agy => set_agy_hooks(&mut settings, file, &exe)?,
+    }
 
     std::fs::create_dir_all(&dir)?;
     if let Some(content) = &existing {
@@ -817,6 +815,39 @@ fn setup(agent: SetupAgent) -> Result<()> {
     )?;
     println!("{name} hooks installed in {}", path.display());
     println!("{note}");
+    Ok(())
+}
+
+fn config_dir(env: &str, default: &str) -> Result<PathBuf> {
+    match std::env::var_os(env).filter(|dir| !dir.is_empty()) {
+        Some(dir) => Ok(PathBuf::from(dir)),
+        None => Ok(home_dir()?.join(default)),
+    }
+}
+
+fn home_dir() -> Result<PathBuf> {
+    std::env::home_dir().ok_or_else(|| anyhow!("cannot locate the home directory"))
+}
+
+/// Antigravity groups hooks under a name we own, and expects JSON on stdout from every hook.
+/// No PreToolUse hook: one that answers `{}` blocks the tool call.
+fn set_agy_hooks(settings: &mut Value, file: &str, exe: &str) -> Result<()> {
+    let hook = |arguments: &str| {
+        json!([{
+            "type": "command",
+            "command": format!("{exe} {arguments} 2>/dev/null; printf '{{}}\\n'"),
+        }])
+    };
+    settings
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("{file} must contain a JSON object"))?
+        .insert(
+            "tmux-aside".to_string(),
+            json!({
+                "PreInvocation": hook("set-status working"),
+                "Stop": hook("set-status done"),
+            }),
+        );
     Ok(())
 }
 

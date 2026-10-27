@@ -88,6 +88,7 @@ enum Command {
 enum AiArg {
     Claude,
     Codex,
+    Agy,
 }
 
 fn main() -> Result<()> {
@@ -122,6 +123,7 @@ fn main() -> Result<()> {
                         .map(|ai| match ai {
                             AiArg::Claude => Ai::Claude,
                             AiArg::Codex => Ai::Codex,
+                            AiArg::Agy => Ai::Agy,
                         })
                         .collect()
                 })
