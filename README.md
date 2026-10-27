@@ -159,7 +159,7 @@ Shows how much of the Claude and Codex plan limits you have used, with the time 
 
 ### clock
 
-The time in several zones: `args: ["America/Santiago=Santiago", "Europe/Madrid=Madrid"]`. Pair it with `title: ${today}` to show the date.
+The time in several zones: `args: ["America/Santiago=Santiago", "Europe/Madrid=Madrid"]`. The clock of your system's zone is highlighted. Pair it with `title: ${today}` to show the date.
 
 - `--sort alphabetical|earliest|latest|given`: by label (the default), the zone where it is earliest or latest first, or in the order given.
 

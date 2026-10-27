@@ -1,5 +1,5 @@
 use jiff::Timestamp;
-use tmux_aside::protocol::Row;
+use tmux_aside::protocol::{Row, Tone};
 use tmux_aside_clock::{Sort, rows};
 
 fn at(instant: &str) -> Timestamp {
@@ -25,6 +25,7 @@ fn shows_labelled_clocks_sorted_alphabetically() {
             "America/Mexico_City=México",
         ]),
         Sort::Alphabetical,
+        None,
     )
     .unwrap();
 
@@ -45,6 +46,7 @@ fn zones_without_a_label_show_their_city_name() {
         at("2026-10-23T12:00:00Z"),
         &specs(&["America/New_York"]),
         Sort::Alphabetical,
+        None,
     )
     .unwrap();
 
@@ -57,6 +59,7 @@ fn an_unknown_zone_is_reported_by_name() {
         at("2026-10-23T12:00:00Z"),
         &specs(&["Mars/Olympus=Marte"]),
         Sort::Alphabetical,
+        None,
     )
     .unwrap_err()
     .to_string();
@@ -70,6 +73,7 @@ fn afternoon_times_use_pm() {
         at("2026-10-23T20:05:00Z"),
         &specs(&["America/Santiago=Chile"]),
         Sort::Alphabetical,
+        None,
     )
     .unwrap();
 
@@ -84,7 +88,7 @@ fn clocks_can_be_sorted_by_how_late_it_is() {
         "America/Caracas=Venezuela",
     ]);
     let order = |sort| -> Vec<String> {
-        rows(at("2026-10-26T13:00:00Z"), &zones, sort)
+        rows(at("2026-10-26T13:00:00Z"), &zones, sort, None)
             .unwrap()
             .into_iter()
             .map(|row| row.text)
@@ -94,4 +98,21 @@ fn clocks_can_be_sorted_by_how_late_it_is() {
     assert_eq!(order(Sort::Latest), ["Chile", "Venezuela", "México"]);
     assert_eq!(order(Sort::Earliest), ["México", "Venezuela", "Chile"]);
     assert_eq!(order(Sort::Given), ["México", "Chile", "Venezuela"]);
+}
+
+#[test]
+fn the_local_zone_is_highlighted() {
+    let rows = rows(
+        at("2026-10-23T12:00:00Z"),
+        &specs(&["America/Santiago=Chile", "America/Caracas=Venezuela"]),
+        Sort::Given,
+        Some("America/Santiago"),
+    )
+    .unwrap();
+
+    let tones: Vec<(Tone, Tone)> = rows.iter().map(|row| (row.tone, row.detail_tone)).collect();
+    assert_eq!(
+        tones,
+        [(Tone::Accent, Tone::Accent), (Tone::Plain, Tone::Plain)]
+    );
 }

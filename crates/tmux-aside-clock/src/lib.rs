@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
-use tmux_aside::protocol::Row;
+use tmux_aside::protocol::{Row, Tone};
 
 /// Order of the clocks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -21,8 +21,8 @@ pub enum Sort {
 /// time are ordered by label.
 ///
 /// Each spec is an IANA zone, optionally followed by `=Label`; without a label the zone's
-/// city name is shown.
-pub fn rows(now: Timestamp, specs: &[String], sort: Sort) -> Result<Vec<Row>> {
+/// city name is shown. The clock of the `local` zone is highlighted.
+pub fn rows(now: Timestamp, specs: &[String], sort: Sort, local: Option<&str>) -> Result<Vec<Row>> {
     let mut clocks = Vec::new();
     for spec in specs {
         let (zone, label) = match spec.split_once('=') {
@@ -32,10 +32,12 @@ pub fn rows(now: Timestamp, specs: &[String], sort: Sort) -> Result<Vec<Row>> {
         let tz = TimeZone::get(zone).with_context(|| format!("unknown time zone '{zone}'"))?;
         let time = now.to_zoned(tz);
         let offset = time.offset().seconds();
-        clocks.push((
-            offset,
-            Row::with_detail(label, time.strftime("%-I:%M %p").to_string()),
-        ));
+        let mut row = Row::with_detail(label, time.strftime("%-I:%M %p").to_string());
+        if local == Some(zone) {
+            row.tone = Tone::Accent;
+            row.detail_tone = Tone::Accent;
+        }
+        clocks.push((offset, row));
     }
     match sort {
         Sort::Alphabetical => clocks.sort_by(|(_, a), (_, b)| a.text.cmp(&b.text)),

@@ -7,7 +7,7 @@ use jiff::tz::TimeZone;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
 use tmux_aside_clock::Sort;
 
-/// Sidebar section showing the time in several time zones.
+/// Sidebar section showing the time in several time zones, with the local one highlighted.
 #[derive(Parser)]
 #[command(version)]
 struct Cli {
@@ -56,7 +56,8 @@ fn run(cli: Cli) -> Result<()> {
         SortArg::Latest => Sort::Latest,
         SortArg::Given => Sort::Given,
     };
-    let rows = tmux_aside_clock::rows(Timestamp::now(), &zones, sort)?;
+    let local = TimeZone::system();
+    let rows = tmux_aside_clock::rows(Timestamp::now(), &zones, sort, local.iana_name())?;
     print(&PluginMessage::Hello {
         protocol: PLUGIN_PROTOCOL,
         features: vec![],
