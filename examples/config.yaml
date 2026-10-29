@@ -32,7 +32,8 @@ sections:
     interval: 60s
     args:
       - --query
-      # Add repo:owner/name qualifiers to watch only some repositories.
+      # Add repo:owner/name to watch one repository; join several with OR inside
+      # parentheses: (repo:owner/a OR repo:owner/b).
       - is:pr is:open author:@me archived:false
       - --state-color
       - number

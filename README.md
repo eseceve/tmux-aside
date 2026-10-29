@@ -145,7 +145,7 @@ Lists AI coding agents running in tmux panes. Claude Code, Codex and Antigravity
 
 Lists the pull requests matching a [GitHub search](https://docs.github.com/en/search-github/searching-on-github/searching-issues-and-pull-requests), grouped by repository and colored by their combined state.
 
-- `--query "is:pr is:open review-requested:@me archived:false"`: add `repo:owner/name` qualifiers to watch only some repositories; `OR` and parentheses group qualifiers.
+- `--query "is:pr is:open review-requested:@me archived:false"`: add a `repo:owner/name` qualifier to watch only one repository. Qualifiers separated by spaces must all match, so join several repositories with `OR` inside parentheses: `(repo:owner/a OR repo:owner/b)`.
 - `--state-color number --state-color bar`: which parts take the state color.
 - `--merge-info`: unresolved review threads and approvals.
 - `--byline`: author and age.

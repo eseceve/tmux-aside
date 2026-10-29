@@ -11,8 +11,8 @@ use tmux_aside_github::{Part, RowOptions, SEARCH_QUERY, messages, parse_search, 
 #[derive(Parser)]
 #[command(version)]
 struct Cli {
-    /// GitHub search selecting the pull requests; add `repo:owner/name` qualifiers to watch
-    /// only some repositories
+    /// GitHub search selecting the pull requests; join several `repo:owner/name` qualifiers
+    /// with `OR` inside parentheses, since qualifiers separated by spaces must all match
     #[arg(long, default_value = "is:pr is:open author:@me archived:false")]
     query: String,
     /// Section title [default: "Pull requests", in the sidebar's language]
