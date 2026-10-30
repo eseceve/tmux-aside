@@ -183,21 +183,7 @@ fn explicit_width() -> Result<Option<Width>> {
 
 /// Shows `window` with its sidebar focused, or runs `fallback` when the window has no sidebar.
 pub fn select(window: &str, fallback: &[String]) -> Result<()> {
-    let sidebar = tmux::run(&[
-        "list-panes",
-        "-t",
-        window,
-        "-F",
-        &format!("#{{?{ROLE_OPTION},#{{pane_id}},}}"),
-    ])
-    .ok()
-    .and_then(|panes| {
-        panes
-            .lines()
-            .find(|line| !line.is_empty())
-            .map(str::to_string)
-    });
-    match (sidebar, fallback.split_first()) {
+    match (sidebar_in(&["-t", window]), fallback.split_first()) {
         (Some(pane), _) => tmux::run(&["switch-client", "-t", &pane]).map(|_| ()),
         (None, Some((program, args))) => {
             std::process::Command::new(program).args(args).status()?;
@@ -205,6 +191,23 @@ pub fn select(window: &str, fallback: &[String]) -> Result<()> {
         }
         (None, None) => Ok(()),
     }
+}
+
+/// Moves the focus to the sidebar of the current window, and does nothing when it has none.
+pub fn focus() -> Result<()> {
+    if let Some(pane) = sidebar_in(&[]) {
+        tmux::run(&["select-pane", "-t", &pane])?;
+    }
+    Ok(())
+}
+
+fn sidebar_in(target: &[&str]) -> Option<String> {
+    let format = format!("#{{?{ROLE_OPTION},#{{pane_id}},}}");
+    let panes = tmux::run(&[&["list-panes"], target, &["-F", &format]].concat()).ok()?;
+    panes
+        .lines()
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
 }
 
 fn sidebar_panes() -> Result<Vec<String>> {

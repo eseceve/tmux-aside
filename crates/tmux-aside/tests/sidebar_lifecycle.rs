@@ -82,6 +82,37 @@ fn toggle_turns_the_sidebar_on_and_off() {
 }
 
 #[test]
+fn focus_moves_to_the_sidebar_of_the_current_window_only() {
+    let server = TmuxServer::start(2);
+    server.aside(&["on"]);
+
+    server.aside(&["focus"]);
+
+    let current = server.tmux(&["display-message", "-p", "#{window_id}"]);
+    let sidebars = server.sidebars();
+    assert!(
+        sidebars
+            .iter()
+            .all(|pane| pane.active == (pane.window_id == current)),
+        "{sidebars:?}"
+    );
+}
+
+#[test]
+fn focus_leaves_the_focus_alone_while_the_sidebar_is_off() {
+    let server = TmuxServer::start(1);
+    let active = server.tmux(&["display-message", "-p", "#{pane_id}"]);
+
+    server.aside(&["focus"]);
+
+    assert!(server.sidebars().is_empty());
+    assert_eq!(
+        server.tmux(&["display-message", "-p", "#{pane_id}"]),
+        active
+    );
+}
+
+#[test]
 fn default_width_follows_window_resizes() {
     let server = TmuxServer::start(1);
     server.aside(&["on"]);

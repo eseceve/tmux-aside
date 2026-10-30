@@ -118,6 +118,7 @@ fn writes_the_default_keys_to_a_new_config() {
         format!(
             "# >>> tmux-aside >>>\n\
              bind-key B run-shell \"'{exe}' toggle\"\n\
+             bind-key Tab run-shell \"'{exe}' focus\"\n\
              bind-key R run-shell \"'{exe}' reload\"\n\
              # <<< tmux-aside <<<\n"
         )

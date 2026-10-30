@@ -30,6 +30,8 @@ enum Command {
         #[arg(long)]
         width: Option<Width>,
     },
+    /// Move the focus to the sidebar of the current window, if it is shown
+    Focus,
     /// Reread the config and restart every plugin
     Reload,
     /// Bind keys in the tmux config and install the AI hooks, asking for each
@@ -40,6 +42,9 @@ enum Command {
         /// Key that toggles the sidebar, as written after bind-key ("-" leaves it unbound)
         #[arg(long, allow_hyphen_values = true)]
         toggle: Option<String>,
+        /// Key that moves the focus to the sidebar
+        #[arg(long, allow_hyphen_values = true)]
+        focus: Option<String>,
         /// Key that jumps to the agent waiting the longest, or done when none waits
         #[arg(long, allow_hyphen_values = true)]
         next: Option<String>,
@@ -96,10 +101,12 @@ fn main() -> Result<()> {
         Command::On { width } => sidebar::on(width),
         Command::Off => sidebar::off(),
         Command::Toggle { width } => sidebar::toggle(width),
+        Command::Focus => sidebar::focus(),
         Command::Reload => reload(),
         Command::Setup {
             config,
             toggle,
+            focus,
             next,
             reload,
             hooks,
@@ -109,6 +116,7 @@ fn main() -> Result<()> {
             config,
             keys: [
                 (Action::Toggle, toggle),
+                (Action::Focus, focus),
                 (Action::Next, next),
                 (Action::Reload, reload),
             ]

@@ -19,18 +19,20 @@ const UNBOUND: &str = "-";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Toggle,
+    Focus,
     Next,
     Reload,
 }
 
 impl Action {
     /// Every action, in the order they are asked for and written.
-    pub const ALL: [Action; 3] = [Action::Toggle, Action::Next, Action::Reload];
+    pub const ALL: [Action; 4] = [Action::Toggle, Action::Focus, Action::Next, Action::Reload];
 
     /// The keys offered for the action, as written after `bind-key`. The first is the default.
     pub fn candidates(self) -> &'static [&'static str] {
         match self {
             Action::Toggle => &["B", "S", "e"],
+            Action::Focus => &["Tab", "A", "F"],
             Action::Next => &["W", "N", "G"],
             Action::Reload => &["R", "O", "Q"],
         }
@@ -39,6 +41,7 @@ impl Action {
     fn description(self) -> &'static str {
         match self {
             Action::Toggle => "Toggle the sidebar",
+            Action::Focus => "Focus the sidebar",
             Action::Next => "Jump to the agent waiting (or done) the longest",
             Action::Reload => "Reload the config",
         }
@@ -46,7 +49,7 @@ impl Action {
 
     fn program(self) -> Result<PathBuf> {
         match self {
-            Action::Toggle | Action::Reload => Ok(std::env::current_exe()?),
+            Action::Toggle | Action::Focus | Action::Reload => Ok(std::env::current_exe()?),
             Action::Next => plugin::resolve("agents", Language::En),
         }
     }
@@ -54,6 +57,7 @@ impl Action {
     fn arguments(self) -> &'static str {
         match self {
             Action::Toggle => "toggle",
+            Action::Focus => "focus",
             Action::Next => "next",
             Action::Reload => "reload",
         }
