@@ -27,7 +27,7 @@ struct Cli {
     /// Add a line with each pull request's author and age
     #[arg(long)]
     byline: bool,
-    /// Add a line with each pull request's unresolved review threads and approvals
+    /// Add a line with each pull request's running checks, unresolved review threads and approvals
     #[arg(long)]
     merge_info: bool,
     /// Show the lines each pull request adds and removes, as +N -M

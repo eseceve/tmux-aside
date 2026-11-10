@@ -149,7 +149,7 @@ Lists the pull requests matching a [GitHub search](https://docs.github.com/en/se
 
 - `--query "is:pr is:open review-requested:@me archived:false"`: add a `repo:owner/name` qualifier to watch only one repository. Qualifiers separated by spaces must all match, so join several repositories with `OR` inside parentheses: `(repo:owner/a OR repo:owner/b)`.
 - `--state-color number --state-color bar`: which parts take the state color.
-- `--merge-info`: unresolved review threads and approvals.
+- `--merge-info`: checks still running (`◷ Jenkins, CodeRabbit`), unresolved review threads and approvals.
 - `--byline`: author and age.
 - `--diff`: lines the pull request adds and removes (`+120 -8`).
 - Keys on a row: `enter` opens the pull request, `c` copies its URL.

@@ -11,7 +11,7 @@ else printf %s \"$1\" | xclip -selection clipboard; fi";
 
 /// GraphQL query listing pull requests that match a GitHub search (`$q`), with the fields
 /// the rows show.
-pub const SEARCH_QUERY: &str = "query($q: String!, $limit: Int!) { search(query: $q, type: ISSUE_ADVANCED, first: $limit) { nodes { ... on PullRequest { number title url isDraft additions deletions reviewDecision createdAt updatedAt author { login } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }";
+pub const SEARCH_QUERY: &str = "query($q: String!, $limit: Int!) { search(query: $q, type: ISSUE_ADVANCED, first: $limit) { nodes { ... on PullRequest { number title url isDraft additions deletions reviewDecision createdAt updatedAt author { login } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } } } } } }";
 
 /// Text the section shows, in one language.
 pub struct Messages {
@@ -68,6 +68,8 @@ pub struct PullRequest {
     pub draft: bool,
     pub review: Option<String>,
     pub checks: Option<String>,
+    /// Names of the checks that have not finished yet.
+    pub running_checks: Vec<String>,
     pub author: String,
     /// The pull request cannot merge cleanly into its base branch.
     pub conflicting: bool,
@@ -171,7 +173,7 @@ pub struct RowOptions {
     pub colored: Vec<Part>,
     /// Current time; when set each row adds a line with its author and age.
     pub byline_at: Option<Timestamp>,
-    /// Add a line with the unresolved review threads and the approvals.
+    /// Add a line with the running checks, the unresolved review threads and the approvals.
     pub merge_info: bool,
     /// Start the first extra line with the lines added and removed, as `+N -M`.
     pub diff: bool,
@@ -223,9 +225,9 @@ fn byline(pr: &PullRequest, now: Timestamp) -> String {
     }
 }
 
-/// `2 unresolved · 1/2 approvals`; the threads part is left out when every thread is
-/// resolved, and the required count when the base branch requires none or its protection is
-/// not visible.
+/// `◷ Jenkins · 2 unresolved · 1/2 approvals`; the running checks are left out when none is
+/// running, the threads part when every thread is resolved, and the required count when the
+/// base branch requires none or its protection is not visible.
 pub fn merge_info(pr: &PullRequest, language: Language) -> String {
     let messages = messages(language);
     let approvals = match pr.required_approvals.filter(|required| *required > 0) {
@@ -233,10 +235,16 @@ pub fn merge_info(pr: &PullRequest, language: Language) -> String {
         None if pr.approvals == 1 => messages.one_approval.to_string(),
         None => (messages.approvals)(pr.approvals),
     };
-    match pr.unresolved_threads {
-        0 => approvals,
-        threads => format!("{} · {approvals}", (messages.unresolved)(threads)),
-    }
+    let running =
+        (!pr.running_checks.is_empty()).then(|| format!("◷ {}", pr.running_checks.join(", ")));
+    let unresolved =
+        (pr.unresolved_threads > 0).then(|| (messages.unresolved)(pr.unresolved_threads));
+    running
+        .into_iter()
+        .chain(unresolved)
+        .chain([approvals])
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// Formats an age in seconds as `45m`, `3h` or `2d`.
@@ -362,17 +370,49 @@ struct Commit {
 #[derive(Deserialize)]
 struct Rollup {
     state: String,
+    #[serde(default)]
+    contexts: Option<Nodes<CheckContext>>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "__typename")]
+enum CheckContext {
+    CheckRun { name: String, status: String },
+    StatusContext { context: String, state: String },
+}
+
+impl CheckContext {
+    fn running_name(self) -> Option<String> {
+        match self {
+            CheckContext::CheckRun { name, status } => (status != "COMPLETED").then_some(name),
+            CheckContext::StatusContext { context, state } => {
+                matches!(state.as_str(), "PENDING" | "EXPECTED").then_some(context)
+            }
+        }
+    }
 }
 
 impl Node {
     fn into_pull_request(self) -> PullRequest {
-        let checks = self
+        let rollup = self
             .commits
             .nodes
             .into_iter()
             .next()
-            .and_then(|node| node.commit.status_check_rollup)
-            .map(|rollup| rollup.state);
+            .and_then(|node| node.commit.status_check_rollup);
+        let (checks, running_checks) = match rollup {
+            Some(rollup) => (
+                Some(rollup.state),
+                rollup.contexts.map_or_else(Vec::new, |contexts| {
+                    contexts
+                        .nodes
+                        .into_iter()
+                        .filter_map(CheckContext::running_name)
+                        .collect()
+                }),
+            ),
+            None => (None, Vec::new()),
+        };
         PullRequest {
             repository: self.repository.name,
             full_name: self.repository.name_with_owner,
@@ -384,6 +424,7 @@ impl Node {
             deletions: self.deletions,
             review: self.review_decision,
             checks,
+            running_checks,
             author: self
                 .author
                 .map_or_else(|| "ghost".to_string(), |author| author.login),

@@ -300,6 +300,26 @@ fn merge_info_lists_unresolved_threads_and_approvals() {
 }
 
 #[test]
+fn merge_info_starts_with_the_checks_still_running() {
+    let contexts = r#"{"state": "PENDING", "contexts": {"nodes": [
+        {"__typename": "CheckRun", "name": "Jenkins", "status": "IN_PROGRESS"},
+        {"__typename": "CheckRun", "name": "Aikido", "status": "COMPLETED"},
+        {"__typename": "StatusContext", "context": "CodeRabbit", "state": "PENDING"},
+        {"__typename": "StatusContext", "context": "lint", "state": "SUCCESS"}]}}"#;
+    let output = search(
+        &node("api", 1, false, "", "PENDING", "2026-10-20T10:00:00Z")
+            .replace(r#"{"state": "PENDING"}"#, contexts),
+    );
+    let pr = parse_search(&output).unwrap().remove(0);
+
+    assert_eq!(pr.running_checks, ["Jenkins", "CodeRabbit"]);
+    assert_eq!(
+        merge_info(&pr, Language::En),
+        "◷ Jenkins, CodeRabbit · 1 unresolved · 1/2 approvals"
+    );
+}
+
+#[test]
 fn unknown_merge_state_is_not_a_conflict() {
     let output = search(
         &node("api", 1, false, "", "", "2026-10-20T10:00:00Z").replace("MERGEABLE", "UNKNOWN"),
