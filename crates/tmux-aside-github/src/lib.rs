@@ -66,6 +66,8 @@ pub struct PullRequest {
     pub title: String,
     pub url: String,
     pub draft: bool,
+    /// GitHub's review decision. Repositories that do not require reviews have none, so it
+    /// comes from the latest reviews: a change request wins over an approval.
     pub review: Option<String>,
     pub checks: Option<String>,
     /// Names of the checks that have not finished yet.
@@ -413,6 +415,21 @@ impl Node {
             ),
             None => (None, Vec::new()),
         };
+        let reviews: Vec<String> =
+            self.latest_opinionated_reviews
+                .map_or_else(Vec::new, |reviews| {
+                    reviews
+                        .nodes
+                        .into_iter()
+                        .map(|review| review.state)
+                        .collect()
+                });
+        let review = self.review_decision.or_else(|| {
+            ["CHANGES_REQUESTED", "APPROVED"]
+                .into_iter()
+                .find(|state| reviews.iter().any(|review| review == state))
+                .map(str::to_string)
+        });
         PullRequest {
             repository: self.repository.name,
             full_name: self.repository.name_with_owner,
@@ -422,7 +439,7 @@ impl Node {
             draft: self.is_draft,
             additions: self.additions,
             deletions: self.deletions,
-            review: self.review_decision,
+            review,
             checks,
             running_checks,
             author: self
@@ -436,13 +453,10 @@ impl Node {
                     .filter(|thread| !thread.is_resolved)
                     .count()
             }),
-            approvals: self.latest_opinionated_reviews.map_or(0, |reviews| {
-                reviews
-                    .nodes
-                    .iter()
-                    .filter(|review| review.state == "APPROVED")
-                    .count()
-            }),
+            approvals: reviews
+                .iter()
+                .filter(|review| *review == "APPROVED")
+                .count(),
             required_approvals: self
                 .base_ref
                 .and_then(|base| base.branch_protection_rule)

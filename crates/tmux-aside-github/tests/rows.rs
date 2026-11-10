@@ -95,7 +95,31 @@ fn the_state_puts_failing_checks_before_reviews_and_drafts_before_everything() {
     assert_eq!(state(false, "APPROVED", "SUCCESS"), State::Ready);
     assert_eq!(state(false, "APPROVED", ""), State::Ready);
     assert_eq!(state(false, "REVIEW_REQUIRED", "SUCCESS"), State::Review);
-    assert_eq!(state(false, "", ""), State::Review);
+    assert_eq!(state(false, "REVIEW_REQUIRED", ""), State::Review);
+}
+
+#[test]
+fn without_a_review_decision_the_latest_reviews_decide() {
+    let with_reviews = |reviews: &str| {
+        let output = search(
+            &node("api", 1, false, "", "SUCCESS", "2026-10-20T10:00:00Z").replace(
+                r#"[{"state": "APPROVED"}, {"state": "COMMENTED"}]"#,
+                reviews,
+            ),
+        );
+        parse_search(&output).unwrap().remove(0).state()
+    };
+
+    assert_eq!(
+        with_reviews(r#"[{"state": "APPROVED"}, {"state": "COMMENTED"}]"#),
+        State::Ready
+    );
+    assert_eq!(
+        with_reviews(r#"[{"state": "APPROVED"}, {"state": "CHANGES_REQUESTED"}]"#),
+        State::ChangesRequested
+    );
+    assert_eq!(with_reviews(r#"[{"state": "COMMENTED"}]"#), State::Review);
+    assert_eq!(with_reviews("[]"), State::Review);
 }
 
 #[test]
@@ -151,7 +175,10 @@ fn each_state_has_its_own_icon_and_tone() {
         icon(false, "APPROVED", ""),
         ("✓".to_string(), Tone::Success)
     );
-    assert_eq!(icon(false, "", ""), ("○".to_string(), Tone::Muted));
+    assert_eq!(
+        icon(false, "REVIEW_REQUIRED", ""),
+        ("○".to_string(), Tone::Muted)
+    );
     assert_eq!(icon(true, "", ""), ("◌".to_string(), Tone::Muted));
 }
 
