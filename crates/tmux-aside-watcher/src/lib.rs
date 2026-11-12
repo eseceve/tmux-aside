@@ -6,6 +6,8 @@ use tmux_aside::protocol::{Action, Link, Row, Tone};
 use tmux_aside_agents::{AgentState, Status};
 use tmux_aside_github::{PULL_REQUEST_FIELDS, PullRequest, State, parse_pull_request};
 
+const CANDIDATES: usize = 5;
+
 /// Text the section shows, in one language.
 pub struct Messages {
     /// Default section title.
@@ -14,7 +16,12 @@ pub struct Messages {
     implementing: &'static str,
     ready_to_merge: &'static str,
     no_pull_request: &'static str,
-    not_open: &'static str,
+    merged: &'static str,
+    closed: &'static str,
+    worktree_removed: &'static str,
+    removal_failed: &'static str,
+    uncommitted_kept: &'static str,
+    unpushed_kept: &'static str,
     draft: &'static str,
     checks_failing: &'static str,
     conflicts: &'static str,
@@ -33,7 +40,12 @@ const EN: Messages = Messages {
     implementing: "Implementing",
     ready_to_merge: "Ready to merge",
     no_pull_request: "no pull request yet",
-    not_open: "the pull request is no longer open",
+    merged: "Merged",
+    closed: "Closed",
+    worktree_removed: "worktree removed",
+    removal_failed: "the worktree could not be removed",
+    uncommitted_kept: "uncommitted changes kept in the worktree",
+    unpushed_kept: "unpushed commits kept in the worktree",
     draft: "draft",
     checks_failing: "checks failing",
     conflicts: "conflicts",
@@ -52,7 +64,12 @@ const ES: Messages = Messages {
     implementing: "Implementando",
     ready_to_merge: "Listo para mergear",
     no_pull_request: "aún sin pull request",
-    not_open: "el pull request ya no está abierto",
+    merged: "Mergeado",
+    closed: "Cerrado",
+    worktree_removed: "worktree eliminado",
+    removal_failed: "no se pudo eliminar el worktree",
+    uncommitted_kept: "cambios sin commitear conservados en el worktree",
+    unpushed_kept: "commits sin push conservados en el worktree",
     draft: "borrador",
     checks_failing: "checks fallando",
     conflicts: "conflictos",
@@ -80,6 +97,10 @@ pub enum Stage {
     Implementing,
     /// The pull request meets its merge criteria and only waits for someone to merge it.
     ReadyToMerge,
+    /// The pull request was merged.
+    Merged,
+    /// The pull request was closed without being merged.
+    Closed,
 }
 
 impl Stage {
@@ -88,6 +109,8 @@ impl Stage {
         match self {
             Stage::Implementing => messages.implementing,
             Stage::ReadyToMerge => messages.ready_to_merge,
+            Stage::Merged => messages.merged,
+            Stage::Closed => messages.closed,
         }
     }
 }
@@ -129,7 +152,9 @@ pub struct Nudge {
 impl Nudge {
     fn for_pull_request(pull_request: &PullRequest) -> Option<Self> {
         let url = &pull_request.url;
-        if pull_request.conflicting {
+        if pull_request.finished() {
+            None
+        } else if pull_request.conflicting {
             Some(Nudge {
                 kind: NudgeKind::ResolveConflicts,
                 text: format!(
@@ -182,15 +207,31 @@ pub fn is_idle(state: &AgentState, pane: &LivePane) -> bool {
 
 /// The default Ready to merge Criterion: a pull request is Ready to merge when the github
 /// plugin would show it as ready (approved, checks passing, mergeable), and Implementing
-/// otherwise, including while it does not exist or is no longer open.
+/// otherwise, including while it does not exist. A merged or closed one says whether its
+/// worktree was removed or what kept it.
 pub fn evaluate(followed: &Followed, language: Language) -> Evaluation {
     let messages = messages(language);
     let Some(pull_request) = &followed.pull_request else {
-        return match followed.launch.pull_request {
-            Some(_) => implementing(messages.not_open, Tone::Muted),
-            None => implementing(messages.no_pull_request, Tone::Accent),
-        };
+        return implementing(messages.no_pull_request, Tone::Accent);
     };
+    if pull_request.finished() {
+        let (stage, done_tone) = match pull_request.merged {
+            true => (Stage::Merged, Tone::Success),
+            false => (Stage::Closed, Tone::Muted),
+        };
+        let (summary, tone) = match followed.worktree {
+            Some(Worktree::Uncommitted) => (messages.uncommitted_kept, Tone::Warning),
+            Some(Worktree::Unpushed) => (messages.unpushed_kept, Tone::Warning),
+            Some(Worktree::Clean) => (messages.removal_failed, Tone::Warning),
+            Some(Worktree::Missing) | None => (messages.worktree_removed, done_tone),
+        };
+        return Evaluation {
+            stage,
+            summary: summary.to_string(),
+            tone,
+            nudge: None,
+        };
+    }
     let evaluation = match pull_request.state(&[]) {
         State::Ready => Evaluation {
             stage: Stage::ReadyToMerge,
@@ -221,11 +262,36 @@ fn implementing(summary: &str, tone: Tone) -> Evaluation {
     }
 }
 
-/// A Launch the Watcher follows, with the open pull request of its branch when there is one.
+/// A Launch the Watcher follows, with the newest pull request of its branch when there is one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Followed {
     pub launch: Launch,
     pub pull_request: Option<PullRequest>,
+    /// The state of the Launch's worktree, inspected once its pull request is merged or closed.
+    pub worktree: Option<Worktree>,
+}
+
+/// What removing a Launch's worktree would lose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Worktree {
+    /// Not a git worktree any more, such as after it was removed.
+    Missing,
+    /// Nothing would be lost. Seen after a cleanup, it means the removal failed.
+    Clean,
+    /// Files changed and not committed.
+    Uncommitted,
+    /// Commits on no remote branch and not the pull request's head.
+    Unpushed,
+}
+
+/// Whether the Watcher removes the Launch's worktree and closes its window now: only once the
+/// pull request is merged or closed, and only when nothing would be lost.
+pub fn should_clean_up(followed: &Followed) -> bool {
+    followed
+        .pull_request
+        .as_ref()
+        .is_some_and(|pr| pr.finished())
+        && followed.worktree == Some(Worktree::Clean)
 }
 
 /// One row per followed Launch, in the given order and grouped by repository. Enter jumps to
@@ -241,22 +307,16 @@ pub fn rows(followed: &[Followed], language: Language) -> Vec<Row> {
                 label: Some(messages.go_to_agent.to_string()),
                 ..Action::new("enter", &["tmux", "switch-client", "-t", &launch.pane])
             }];
-            let known = match &followed.pull_request {
-                Some(pr) => Some((pr.title.clone(), format!("#{}", pr.number), pr.url.as_str())),
-                None => launch.pull_request.as_deref().map(|url| {
-                    let number = url.rsplit('/').next().unwrap_or_default();
-                    (launch.task.clone(), format!("#{number}"), url)
-                }),
-            };
-            let mut row = match known {
-                Some((title, number, url)) => {
+            let mut row = match &followed.pull_request {
+                Some(pr) => {
+                    let number = format!("#{}", pr.number);
                     actions.push(Action {
                         label: Some(messages.open_pull_request.to_string()),
-                        ..Action::new("p", &["gh", "pr", "view", "--web", url])
+                        ..Action::new("p", &["gh", "pr", "view", "--web", &pr.url])
                     });
                     Row {
-                        links: vec![Link::new(number.clone(), url)],
-                        ..Row::with_detail(title, number)
+                        links: vec![Link::new(number.clone(), pr.url.clone())],
+                        ..Row::with_detail(pr.title.clone(), number)
                     }
                 }
                 None => Row::new(launch.task.clone()),
@@ -279,7 +339,7 @@ pub fn rows(followed: &[Followed], language: Language) -> Vec<Row> {
         .collect()
 }
 
-/// A branch of a GitHub repository whose open pull request is fetched.
+/// A branch of a GitHub repository whose newest pull request is fetched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target {
     pub owner: String,
@@ -314,7 +374,7 @@ pub fn github_repository(remote_url: &str) -> Option<(String, String)> {
         .then(|| (owner.to_string(), name.to_string()))
 }
 
-/// One GraphQL query asking for the open pull request of every target, aliased `p0`, `p1`...
+/// One GraphQL query asking for the newest pull requests of every target, aliased `p0`, `p1`...
 /// in order, and its variables (`o0`, `n0`, `b0`...) as name and value.
 pub fn batch_query(targets: &[Target]) -> (String, Vec<(String, String)>) {
     let mut declarations = Vec::new();
@@ -325,7 +385,7 @@ pub fn batch_query(targets: &[Target]) -> (String, Vec<(String, String)>) {
             "$o{index}: String!, $n{index}: String!, $b{index}: String!"
         ));
         selections.push(format!(
-            "p{index}: repository(owner: $o{index}, name: $n{index}) {{ pullRequests(headRefName: $b{index}, states: OPEN, first: 1) {{ nodes {{ ...PullRequestFields }} }} }}"
+            "p{index}: repository(owner: $o{index}, name: $n{index}) {{ pullRequests(headRefName: $b{index}, first: {CANDIDATES}, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ ...PullRequestFields }} }} }}"
         ));
         variables.extend([
             (format!("o{index}"), target.owner.clone()),
@@ -343,7 +403,7 @@ pub fn batch_query(targets: &[Target]) -> (String, Vec<(String, String)>) {
 
 /// Reads the answer to [`batch_query`] for `count` targets: the pull request of each one,
 /// in order, or `None` when its branch has none or its repository was not found.
-pub fn parse_batch(output: &str, count: usize) -> Result<Vec<Option<PullRequest>>> {
+pub fn parse_batch(output: &str, count: usize) -> Result<Vec<Vec<PullRequest>>> {
     let response: Value = serde_json::from_str(output)?;
     let data = response.get("data").filter(|data| data.is_object());
     if let Some(errors) = response.get("errors").and_then(Value::as_array)
@@ -358,8 +418,35 @@ pub fn parse_batch(output: &str, count: usize) -> Result<Vec<Option<PullRequest>
     let data = data.ok_or_else(|| anyhow!("unexpected GitHub response"))?;
     Ok((0..count)
         .map(|index| {
-            data.pointer(&format!("/p{index}/pullRequests/nodes/0"))
-                .and_then(parse_pull_request)
+            data.pointer(&format!("/p{index}/pullRequests/nodes"))
+                .and_then(Value::as_array)
+                .map_or_else(Vec::new, |nodes| {
+                    nodes.iter().filter_map(parse_pull_request).collect()
+                })
         })
         .collect())
+}
+
+/// The pull request of a Launch among its branch's newest `candidates`, newest first. Ones from
+/// another repository never count. An open one wins. A merged or closed one counts only when
+/// it is the one already recorded for the Launch, or its head is the worktree's `local_head`,
+/// so that an old pull request of a reused branch name is never taken for the Launch's own.
+pub fn choose_pull_request(
+    candidates: Vec<PullRequest>,
+    recorded: Option<&str>,
+    local_head: Option<&str>,
+) -> Option<PullRequest> {
+    let mut own: Vec<PullRequest> = candidates
+        .into_iter()
+        .filter(|pr| !pr.cross_repository)
+        .collect();
+    let position = own
+        .iter()
+        .position(|pr| !pr.finished())
+        .or_else(|| own.iter().position(|pr| Some(pr.url.as_str()) == recorded))
+        .or_else(|| {
+            own.iter()
+                .position(|pr| local_head.is_some() && pr.head.as_deref() == local_head)
+        })?;
+    Some(own.swap_remove(position))
 }

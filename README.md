@@ -179,7 +179,7 @@ Lists the pull requests matching a [GitHub search](https://docs.github.com/en/se
 
 ### watcher
 
-Follows the pull request of every [launch](#launching-agents) whose template opens one, from the branch's open pull request on GitHub, with one row per launch grouped by repository. Each row shows the stage and what it is missing: `Implementing · waiting for approval`, `Implementing · conflicts`, `Ready to merge · waiting to be merged`. A pull request is Ready to merge when it is approved, its checks pass and it merges cleanly, and goes back to Implementing when that stops being true. Runs with `mode: stream`:
+Follows the pull request of every [launch](#launching-agents) whose template opens one: the open pull request of its branch on GitHub, or the one it already followed once that is merged or closed (pull requests from forks are ignored), with one row per launch grouped by repository. Each row shows the stage and what it is missing: `Implementing · waiting for approval`, `Implementing · conflicts`, `Ready to merge · waiting to be merged`. A pull request is Ready to merge when it is approved, its checks pass and it merges cleanly, and goes back to Implementing when that stops being true. Runs with `mode: stream`:
 
 ```yaml
 - plugin: watcher
@@ -187,6 +187,8 @@ Follows the pull request of every [launch](#launching-agents) whose template ope
 ```
 
 When the pull request has conflicts, or unresolved review comments, the watcher types a Nudge into its agent asking it to resolve or answer them. It types only while the agent is idle (done, not working or waiting for you, with its status reported by the [agents](#agents) hooks) and you are not looking at its pane, and at most once per kind and head commit of the pull request, so a new push allows it again.
+
+Once the pull request is merged or closed, the watcher removes the launch's worktree and closes the agent's pane, which closes its window unless you split it (`Merged · worktree removed`). The branch is kept; files git ignores, such as `.env` files and build outputs, are removed with the worktree. When uncommitted changes or commits that are on no remote branch would be lost, it removes nothing and the row warns in yellow (`Merged · uncommitted changes kept in the worktree`) until you deal with them.
 
 - `--interval 30s`: how often pull requests are fetched, all of them in one GitHub query.
 - Keys on a row: `enter` jumps to the agent, `p` opens the pull request.

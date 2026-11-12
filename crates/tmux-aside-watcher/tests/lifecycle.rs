@@ -10,8 +10,8 @@ use tmux_aside::protocol::Tone;
 use tmux_aside_agents::{AgentState, Status};
 use tmux_aside_github::{PullRequest, parse_pull_request};
 use tmux_aside_watcher::{
-    Followed, LivePane, NudgeKind, Stage, Target, batch_query, evaluate, github_repository,
-    is_idle, parse_batch, pending_nudge, rows,
+    Followed, LivePane, NudgeKind, Stage, Target, Worktree, batch_query, choose_pull_request,
+    evaluate, github_repository, is_idle, parse_batch, pending_nudge, rows, should_clean_up,
 };
 
 fn pull_request(changes: Value) -> PullRequest {
@@ -31,6 +31,7 @@ fn followed(pull_request: Option<PullRequest>) -> Followed {
     Followed {
         launch: launch("feat/x", "x"),
         pull_request,
+        worktree: None,
     }
 }
 
@@ -52,7 +53,7 @@ fn the_repository_is_read_from_every_form_of_github_remote() {
 }
 
 #[test]
-fn one_query_asks_for_the_open_pull_request_of_every_branch() {
+fn one_query_asks_for_the_newest_pull_request_of_every_branch() {
     let targets = [
         Target::new("org", "shop", "feat/a"),
         Target::new("org", "api", "fix/b"),
@@ -69,7 +70,7 @@ fn one_query_asks_for_the_open_pull_request_of_every_branch() {
         "{query}"
     );
     assert!(
-        query.contains("pullRequests(headRefName: $b1, states: OPEN"),
+        query.contains("pullRequests(headRefName: $b1, first: 5, orderBy"),
         "{query}"
     );
     assert!(query.contains("fragment PullRequestFields"), "{query}");
@@ -88,9 +89,9 @@ fn one_query_asks_for_the_open_pull_request_of_every_branch() {
 }
 
 #[test]
-fn the_batched_answer_gives_each_branch_its_pull_request_or_none() {
+fn the_batched_answer_gives_each_branch_its_pull_requests() {
     let output = json!({"data": {
-        "p0": {"pullRequests": {"nodes": [node(json!({}))]}},
+        "p0": {"pullRequests": {"nodes": [node(json!({})), node(json!({"number": 9}))]}},
         "p1": {"pullRequests": {"nodes": []}},
         "p2": null
     }})
@@ -98,9 +99,60 @@ fn the_batched_answer_gives_each_branch_its_pull_request_or_none() {
 
     let found = parse_batch(&output, 3).unwrap();
 
-    assert_eq!(found[0].as_ref().map(|pr| pr.number), Some(12));
-    assert!(found[1].is_none());
-    assert!(found[2].is_none());
+    let numbers: Vec<u64> = found[0].iter().map(|pr| pr.number).collect();
+    assert_eq!(numbers, [12, 9]);
+    assert!(found[1].is_empty());
+    assert!(found[2].is_empty());
+}
+
+fn numbered(number: u64, changes: Value) -> PullRequest {
+    let mut changes = changes;
+    changes["number"] = json!(number);
+    changes["url"] = json!(format!("https://github.com/org/shop/pull/{number}"));
+    pull_request(changes)
+}
+
+fn chosen(
+    candidates: Vec<PullRequest>,
+    recorded: Option<&str>,
+    local_head: Option<&str>,
+) -> Option<u64> {
+    choose_pull_request(candidates, recorded, local_head).map(|pr| pr.number)
+}
+
+#[test]
+fn an_open_pull_request_of_the_branch_is_the_launchs_own() {
+    let candidates = vec![
+        numbered(3, json!({"state": "CLOSED"})),
+        numbered(2, json!({"state": "OPEN"})),
+    ];
+
+    assert_eq!(chosen(candidates, None, None), Some(2));
+}
+
+#[test]
+fn an_old_finished_pull_request_of_a_reused_branch_name_is_not_the_launchs_own() {
+    let candidates = vec![numbered(1, json!({"state": "MERGED", "headRefOid": "old"}))];
+
+    assert_eq!(chosen(candidates, None, Some("new")), None);
+}
+
+#[test]
+fn a_finished_pull_request_is_the_launchs_own_when_recorded_or_at_the_worktrees_head() {
+    let merged = || vec![numbered(4, json!({"state": "MERGED", "headRefOid": "abc"}))];
+
+    assert_eq!(
+        chosen(merged(), Some("https://github.com/org/shop/pull/4"), None),
+        Some(4)
+    );
+    assert_eq!(chosen(merged(), None, Some("abc")), Some(4));
+}
+
+#[test]
+fn a_pull_request_from_another_repository_is_never_the_launchs_own() {
+    let candidates = vec![numbered(5, json!({"isCrossRepository": true}))];
+
+    assert_eq!(chosen(candidates, None, None), None);
 }
 
 #[test]
@@ -172,6 +224,7 @@ fn a_row_shows_the_stage_and_links_the_pull_request_and_the_agents_window() {
     let followed = [Followed {
         launch: launch("feat/dark", "Add a dark theme"),
         pull_request: Some(pull_request(json!({}))),
+        worktree: None,
     }];
 
     let rows = rows(&followed, Language::En);
@@ -205,6 +258,7 @@ fn a_launch_without_a_pull_request_shows_its_task_reference() {
     let followed = [Followed {
         launch: launch("feat/new", "https://example.com/issues/7"),
         pull_request: None,
+        worktree: None,
     }];
 
     let rows = rows(&followed, Language::En);
@@ -220,30 +274,12 @@ fn stages_and_summaries_are_translated() {
     let followed = [Followed {
         launch: launch("feat/new", "x"),
         pull_request: None,
+        worktree: None,
     }];
 
     let rows = rows(&followed, Language::Es);
 
     assert_eq!(rows[0].lines, ["Implementando · aún sin pull request"]);
-}
-
-#[test]
-fn a_known_pull_request_that_is_no_longer_open_is_not_shown_as_missing() {
-    let mut launch = launch("feat/merged", "Add a dark theme");
-    launch.pull_request = Some("https://github.com/org/shop/pull/12".to_string());
-    let followed = [Followed {
-        launch,
-        pull_request: None,
-    }];
-
-    let rows = rows(&followed, Language::En);
-
-    assert_eq!(rows[0].detail.as_deref(), Some("#12"));
-    assert_eq!(
-        rows[0].lines,
-        ["Implementing · the pull request is no longer open"]
-    );
-    assert_eq!(rows[0].links[0].url, "https://github.com/org/shop/pull/12");
 }
 
 fn threads(resolved: &[bool]) -> Value {
@@ -365,4 +401,83 @@ fn an_agent_is_idle_when_neither_working_nor_waiting_and_still_in_its_unviewed_p
         !is_idle(&agent(Some(Status::Done)), &pane(40, "claude", true)),
         "someone is looking"
     );
+}
+
+fn finished(state: &str, worktree: Option<Worktree>) -> Followed {
+    Followed {
+        worktree,
+        ..followed(Some(pull_request(json!({"state": state}))))
+    }
+}
+
+#[test]
+fn a_merged_or_closed_pull_request_with_a_clean_worktree_is_cleaned_up() {
+    assert!(should_clean_up(&finished("MERGED", Some(Worktree::Clean))));
+    assert!(should_clean_up(&finished("CLOSED", Some(Worktree::Clean))));
+}
+
+#[test]
+fn a_worktree_with_work_that_would_be_lost_is_kept() {
+    for kept in [Worktree::Uncommitted, Worktree::Unpushed] {
+        assert!(
+            !should_clean_up(&finished("MERGED", Some(kept))),
+            "{kept:?}"
+        );
+    }
+}
+
+#[test]
+fn a_worktree_already_removed_is_not_cleaned_up_again() {
+    assert!(!should_clean_up(&finished(
+        "MERGED",
+        Some(Worktree::Missing)
+    )));
+}
+
+#[test]
+fn nothing_is_cleaned_up_while_the_pull_request_is_open() {
+    assert!(!should_clean_up(&finished("OPEN", Some(Worktree::Clean))));
+    assert!(!should_clean_up(&followed(None)));
+}
+
+#[test]
+fn a_merged_pull_request_says_its_worktree_was_removed() {
+    let evaluation = evaluate(&finished("MERGED", Some(Worktree::Missing)), Language::En);
+
+    assert_eq!(evaluation.stage, Stage::Merged);
+    assert_eq!(evaluation.summary, "worktree removed");
+    assert_eq!(evaluation.tone, Tone::Success);
+}
+
+#[test]
+fn a_kept_worktree_warns_what_it_keeps() {
+    let uncommitted = evaluate(
+        &finished("CLOSED", Some(Worktree::Uncommitted)),
+        Language::En,
+    );
+    let unpushed = evaluate(&finished("MERGED", Some(Worktree::Unpushed)), Language::En);
+
+    assert_eq!(uncommitted.stage, Stage::Closed);
+    assert_eq!(
+        uncommitted.summary,
+        "uncommitted changes kept in the worktree"
+    );
+    assert_eq!(uncommitted.tone, Tone::Warning);
+    assert_eq!(unpushed.summary, "unpushed commits kept in the worktree");
+    assert_eq!(unpushed.tone, Tone::Warning);
+}
+
+#[test]
+fn a_merged_pull_request_asks_for_no_nudge() {
+    let merged = pull_request(json!({"state": "MERGED", "mergeable": "CONFLICTING"}));
+
+    assert!(pending_nudge(&followed(Some(merged))).is_none());
+}
+
+#[test]
+fn a_worktree_that_could_not_be_removed_warns() {
+    let evaluation = evaluate(&finished("MERGED", Some(Worktree::Clean)), Language::En);
+
+    assert_eq!(evaluation.summary, "the worktree could not be removed");
+    assert_eq!(evaluation.tone, Tone::Warning);
 }

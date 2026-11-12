@@ -13,8 +13,8 @@ use tmux_aside::tmux;
 use tmux_aside_agents::{AgentState, agents_dir, state_file};
 use tmux_aside_github::PullRequest;
 use tmux_aside_watcher::{
-    Followed, LivePane, Target, batch_query, github_repository, is_idle, messages, parse_batch,
-    pending_nudge, rows,
+    Followed, LivePane, Target, Worktree, batch_query, choose_pull_request, github_repository,
+    is_idle, messages, parse_batch, pending_nudge, rows, should_clean_up,
 };
 
 const TICK: Duration = Duration::from_secs(1);
@@ -75,13 +75,23 @@ fn run(cli: Cli) -> Result<()> {
         }
         let mut followed: Vec<Followed> = launches
             .into_iter()
-            .map(|launch| Followed {
-                pull_request: pull_requests.get(&launch.id).cloned(),
-                launch,
+            .map(|launch| {
+                let pull_request = pull_requests.get(&launch.id).cloned();
+                Followed {
+                    worktree: pull_request
+                        .as_ref()
+                        .filter(|pr| pr.finished())
+                        .map(|pr| inspect_worktree(&launch.worktree, pr.head.as_deref())),
+                    pull_request,
+                    launch,
+                }
             })
             .collect();
         for followed in &mut followed {
             nudge(followed)?;
+            if should_clean_up(followed) && clean_up(&followed.launch) {
+                followed.worktree = Some(Worktree::Missing);
+            }
         }
         let snapshot = serde_json::to_string(&PluginMessage::Snapshot {
             title: Some(title.clone()),
@@ -132,7 +142,15 @@ fn fetch(launches: &[Launch], language: Language) -> Result<HashMap<String, Pull
     Ok(targets
         .into_iter()
         .zip(found)
-        .filter_map(|((launch, _), pull_request)| Some((launch.id.clone(), pull_request?)))
+        .filter_map(|((launch, _), candidates)| {
+            let local_head = git_output(&launch.worktree, &["rev-parse", "HEAD"]);
+            let pull_request = choose_pull_request(
+                candidates,
+                launch.pull_request.as_deref(),
+                local_head.as_deref(),
+            )?;
+            Some((launch.id.clone(), pull_request))
+        })
         .collect())
 }
 
@@ -210,11 +228,85 @@ fn agent_is_idle(pane: &str) -> bool {
     })
 }
 
+/// What removing `worktree` would lose. Commits are pushed when the branch is at the pull
+/// request's `head` or when a remote branch holds them.
+fn inspect_worktree(worktree: &Path, head: Option<&str>) -> Worktree {
+    let git = |args: &[&str]| git_output(worktree, args);
+    if !worktree.exists() {
+        return Worktree::Missing;
+    }
+    let Some(changes) = git(&["status", "--porcelain"]) else {
+        return Worktree::Missing;
+    };
+    if !changes.is_empty() {
+        return Worktree::Uncommitted;
+    }
+    if head.is_some() && git(&["rev-parse", "HEAD"]).as_deref() == head {
+        return Worktree::Clean;
+    }
+    match git(&["rev-list", "--count", "HEAD", "--not", "--remotes"]).as_deref() {
+        Some("0") => Worktree::Clean,
+        _ => Worktree::Unpushed,
+    }
+}
+
+/// Removes the Launch's worktree, then closes the agent's pane when it is still the one
+/// launched there, which closes its window unless someone split it. Returns whether the worktree was removed; failures go to stderr.
+fn clean_up(launch: &Launch) -> bool {
+    let worktree = launch
+        .worktree
+        .canonicalize()
+        .unwrap_or_else(|_| launch.worktree.clone());
+    let agent_still_there = tmux::run(&[
+        "display-message",
+        "-p",
+        "-t",
+        &launch.pane,
+        "#{window_id}\t#{pane_current_path}",
+    ])
+    .ok()
+    .and_then(|live| {
+        let (window, path) = live.split_once('\t')?;
+        Some(window == launch.window && Path::new(path).starts_with(&worktree))
+    })
+    .unwrap_or(false);
+    let removed = Command::new("git")
+        .arg("-C")
+        .arg(&launch.repository)
+        .args(["worktree", "remove"])
+        .arg(&launch.worktree)
+        .output();
+    match removed {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            eprintln!(
+                "failed to remove {}: {}",
+                launch.worktree.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+            return false;
+        }
+        Err(error) => {
+            eprintln!("failed to remove {}: {error}", launch.worktree.display());
+            return false;
+        }
+    }
+    if agent_still_there && let Err(error) = tmux::run(&["kill-pane", "-t", &launch.pane]) {
+        eprintln!("failed to close {}: {error:#}", launch.pane);
+    }
+    true
+}
+
 fn origin_url(repository: &Path) -> Option<String> {
+    git_output(repository, &["remote", "get-url", "origin"])
+}
+
+/// The trimmed output of `git` run in `directory`, or `None` when it fails.
+fn git_output(directory: &Path, args: &[&str]) -> Option<String> {
     let output = Command::new("git")
         .arg("-C")
-        .arg(repository)
-        .args(["remote", "get-url", "origin"])
+        .arg(directory)
+        .args(args)
         .output()
         .ok()?;
     output

@@ -10,7 +10,7 @@ elif command -v wl-copy >/dev/null; then printf %s \"$1\" | wl-copy; \
 else printf %s \"$1\" | xclip -selection clipboard; fi";
 
 /// GraphQL fragment `PullRequestFields` selecting the fields a [`PullRequest`] is read from.
-pub const PULL_REQUEST_FIELDS: &str = "fragment PullRequestFields on PullRequest { number title url headRefOid isDraft additions deletions reviewDecision createdAt updatedAt author { login } labels(first: 50) { nodes { name } } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } } }";
+pub const PULL_REQUEST_FIELDS: &str = "fragment PullRequestFields on PullRequest { number title url headRefOid state isCrossRepository isDraft additions deletions reviewDecision createdAt updatedAt author { login } labels(first: 50) { nodes { name } } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } } }";
 
 /// GraphQL query listing pull requests that match a GitHub search (`$q`), with the fields
 /// the rows show.
@@ -74,6 +74,12 @@ pub struct PullRequest {
     pub url: String,
     /// The commit the pull request's branch points to.
     pub head: Option<String>,
+    /// Merged into its base branch.
+    pub merged: bool,
+    /// Closed without being merged.
+    pub closed: bool,
+    /// Opened from a branch of another repository, such as a fork.
+    pub cross_repository: bool,
     pub draft: bool,
     /// GitHub's review decision. Repositories that do not require reviews have none, so it
     /// comes from the latest reviews: a change request wins over an approval.
@@ -146,6 +152,11 @@ pub enum State {
 }
 
 impl PullRequest {
+    /// Merged or closed: no longer open.
+    pub fn finished(&self) -> bool {
+        self.merged || self.closed
+    }
+
     /// Drafts are always `Draft`; otherwise failing checks win over a change request, which
     /// wins over any of `blocked_labels`, which wins over running checks. Approved pull requests
     /// with passing (or no) checks are `Ready`.
@@ -338,6 +349,10 @@ struct Node {
     url: String,
     #[serde(default)]
     head_ref_oid: Option<String>,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    is_cross_repository: bool,
     is_draft: bool,
     #[serde(default)]
     additions: u64,
@@ -490,6 +505,9 @@ impl Node {
             title: self.title,
             url: self.url,
             head: self.head_ref_oid,
+            merged: self.state.as_deref() == Some("MERGED"),
+            closed: self.state.as_deref() == Some("CLOSED"),
+            cross_repository: self.is_cross_repository,
             draft: self.is_draft,
             additions: self.additions,
             deletions: self.deletions,

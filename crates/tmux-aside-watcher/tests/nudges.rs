@@ -16,7 +16,7 @@ impl Setup {
     fn new(status: &str, response: Value) -> Self {
         let scratch = Scratch::new();
         let tmux = Tmux::start();
-        let pane = tmux.agent_pane(&scratch.0.join("typed"));
+        let pane = tmux.agent_pane(&scratch.0.join("typed"), &scratch.0);
         tmux.report(&scratch, &pane, status);
         let shop = scratch.repository("shop");
         scratch.save(&tmux_aside::launch::Launch {

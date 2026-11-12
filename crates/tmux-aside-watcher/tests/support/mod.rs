@@ -281,14 +281,17 @@ impl Tmux {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
-    /// Opens a pane whose agent writes every line typed into it to `typed`, and returns its id.
-    pub fn agent_pane(&self, typed: &Path) -> String {
+    /// Opens a pane in `dir` whose agent writes every line typed into it to `typed`, and
+    /// returns its id.
+    pub fn agent_pane(&self, typed: &Path, dir: &Path) -> String {
         let pane = self.run(&[
             "new-window",
             "-d",
             "-P",
             "-F",
             "#{pane_id}",
+            "-c",
+            dir.to_str().unwrap(),
             &format!("exec cat > '{}'", typed.display()),
         ]);
         let command = || {
