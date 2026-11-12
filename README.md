@@ -152,6 +152,7 @@ Lists the pull requests matching a [GitHub search](https://docs.github.com/en/se
 - `--merge-info`: checks still running (`◷ Jenkins, CodeRabbit`), unresolved review threads and approvals.
 - `--byline`: author and age.
 - `--diff`: lines the pull request adds and removes (`+120 -8`).
+- `--labels merge:`: labels that start with the prefix (`merge:blocked · merge:depends-on`); repeat for several prefixes.
 - Keys on a row: `enter` opens the pull request, `c` copies its URL.
 
 ### usage

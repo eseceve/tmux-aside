@@ -390,6 +390,44 @@ fn diff_stats_start_the_first_extra_line_or_stand_alone() {
 }
 
 #[test]
+fn labels_matching_a_prefix_get_their_own_line_in_alphabetical_order() {
+    let labels = r#""labels": {"nodes": [{"name": "qa:approved"}, {"name": "merge:depends-on"},
+        {"name": "bug"}, {"name": "merge:blocked"}]}, "number""#;
+    let output = search(
+        &node("api", 1, false, "", "", "2026-10-20T10:00:00Z").replacen(r#""number""#, labels, 1),
+    );
+    let pr = parse_search(&output).unwrap().remove(0);
+    let lines = |label_prefixes: &[&str]| {
+        rows(
+            std::slice::from_ref(&pr),
+            &RowOptions {
+                merge_info: true,
+                label_prefixes: label_prefixes.iter().map(|p| p.to_string()).collect(),
+                ..Default::default()
+            },
+        )
+        .remove(0)
+        .lines
+    };
+
+    assert_eq!(
+        lines(&["merge:"]),
+        [
+            "1 unresolved · 1/2 approvals",
+            "merge:blocked · merge:depends-on"
+        ]
+    );
+    assert_eq!(
+        lines(&["qa:", "merge:"]),
+        [
+            "1 unresolved · 1/2 approvals",
+            "merge:blocked · merge:depends-on · qa:approved"
+        ]
+    );
+    assert_eq!(lines(&["prod:"]), ["1 unresolved · 1/2 approvals"]);
+}
+
+#[test]
 fn rows_are_shown_in_spanish() {
     let mut pr = pull_request(false, "", "");
     assert_eq!(

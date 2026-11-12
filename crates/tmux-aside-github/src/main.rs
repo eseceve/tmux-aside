@@ -33,6 +33,10 @@ struct Cli {
     /// Show the lines each pull request adds and removes, as +N -M
     #[arg(long)]
     diff: bool,
+    /// Add a line with each pull request's labels that start with this prefix (`merge:`);
+    /// repeat for several
+    #[arg(long = "labels", value_name = "PREFIX")]
+    label_prefixes: Vec<String>,
 }
 
 fn main() -> ExitCode {
@@ -68,6 +72,7 @@ fn run(cli: Cli) -> Result<()> {
             byline_at: cli.byline.then(Timestamp::now),
             merge_info: cli.merge_info,
             diff: cli.diff,
+            label_prefixes: cli.label_prefixes,
             language,
         },
     );

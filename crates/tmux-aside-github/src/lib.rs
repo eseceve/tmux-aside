@@ -11,7 +11,7 @@ else printf %s \"$1\" | xclip -selection clipboard; fi";
 
 /// GraphQL query listing pull requests that match a GitHub search (`$q`), with the fields
 /// the rows show.
-pub const SEARCH_QUERY: &str = "query($q: String!, $limit: Int!) { search(query: $q, type: ISSUE_ADVANCED, first: $limit) { nodes { ... on PullRequest { number title url isDraft additions deletions reviewDecision createdAt updatedAt author { login } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } } } } } }";
+pub const SEARCH_QUERY: &str = "query($q: String!, $limit: Int!) { search(query: $q, type: ISSUE_ADVANCED, first: $limit) { nodes { ... on PullRequest { number title url isDraft additions deletions reviewDecision createdAt updatedAt author { login } labels(first: 50) { nodes { name } } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } } } } } }";
 
 /// Text the section shows, in one language.
 pub struct Messages {
@@ -84,6 +84,7 @@ pub struct PullRequest {
     /// Lines added and removed.
     pub additions: u64,
     pub deletions: u64,
+    pub labels: Vec<String>,
 }
 
 /// Parses the response of [`SEARCH_QUERY`], skipping results that are not pull requests.
@@ -179,6 +180,8 @@ pub struct RowOptions {
     pub merge_info: bool,
     /// Start the first extra line with the lines added and removed, as `+N -M`.
     pub diff: bool,
+    /// Add a line with the labels that start with any of these prefixes, when there is one.
+    pub label_prefixes: Vec<String>,
     /// Language of the text the rows add.
     pub language: Language,
 }
@@ -201,6 +204,7 @@ pub fn rows(pull_requests: &[PullRequest], options: &RowOptions) -> Vec<Row> {
                 .map(|now| byline(pr, now))
                 .into_iter()
                 .chain(options.merge_info.then(|| merge_info(pr, options.language)))
+                .chain(labels(pr, &options.label_prefixes))
                 .collect();
             if options.diff {
                 let diff = format!("+{} -{}", pr.additions, pr.deletions);
@@ -225,6 +229,21 @@ fn byline(pr: &PullRequest, now: Timestamp) -> String {
         }
         Err(_) => format!("@{}", pr.author),
     }
+}
+
+fn labels(pr: &PullRequest, prefixes: &[String]) -> Option<String> {
+    let mut matching: Vec<&str> = pr
+        .labels
+        .iter()
+        .filter(|label| {
+            prefixes
+                .iter()
+                .any(|prefix| label.starts_with(prefix.as_str()))
+        })
+        .map(String::as_str)
+        .collect();
+    matching.sort_unstable();
+    (!matching.is_empty()).then(|| matching.join(" · "))
 }
 
 /// `◷ Jenkins · 2 unresolved · 1/2 approvals`; the running checks are left out when none is
@@ -302,6 +321,8 @@ struct Node {
     updated_at: String,
     author: Option<Author>,
     #[serde(default)]
+    labels: Option<Nodes<Label>>,
+    #[serde(default)]
     mergeable: Option<String>,
     #[serde(default)]
     review_threads: Option<Nodes<Thread>>,
@@ -339,6 +360,11 @@ struct BaseRef {
 #[serde(rename_all = "camelCase")]
 struct ProtectionRule {
     required_approving_review_count: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct Label {
+    name: String,
 }
 
 #[derive(Deserialize)]
@@ -463,6 +489,9 @@ impl Node {
                 .and_then(|rule| rule.required_approving_review_count),
             created_at: self.created_at,
             updated_at: self.updated_at,
+            labels: self.labels.map_or_else(Vec::new, |labels| {
+                labels.nodes.into_iter().map(|label| label.name).collect()
+            }),
         }
     }
 }
