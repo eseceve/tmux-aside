@@ -1,4 +1,4 @@
-use crate::protocol::{Align, Row, Tone};
+use crate::protocol::{Align, Link, Row, Tone};
 use crate::view::{Cursor, Density, Pin, Section, Target, View};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -20,6 +20,8 @@ const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 pub struct Span {
     pub text: String,
     pub tone: Tone,
+    /// Terminal hyperlink the text opens.
+    pub url: Option<String>,
 }
 
 /// One screen line of the sidebar, already padded or truncated to the sidebar width.
@@ -48,6 +50,19 @@ pub struct LayoutOptions {
 impl LayoutLine {
     pub fn text(&self) -> String {
         self.spans.iter().map(|span| span.text.as_str()).collect()
+    }
+
+    /// The column where each linked span starts, with its text and url.
+    pub fn links(&self) -> Vec<(usize, &str, &str)> {
+        let mut column = 0;
+        let mut links = Vec::new();
+        for span in &self.spans {
+            if let Some(url) = &span.url {
+                links.push((column, span.text.as_str(), url.as_str()));
+            }
+            column += columns(&span.text);
+        }
+        links
     }
 }
 
@@ -246,7 +261,7 @@ fn section_lines(
             selected,
             current,
             target: Some(cursor(Target::Row(row))),
-            spans: first,
+            spans: linked(first, &data.links),
         });
         let icon_width = data.icon.as_ref().map_or(0, |_| 2);
         for extra in &data.lines {
@@ -265,7 +280,7 @@ fn section_lines(
                 selected,
                 current,
                 target: Some(cursor(Target::Row(row))),
-                spans,
+                spans: linked(spans, &data.links),
             });
         }
     }
@@ -440,7 +455,60 @@ fn columns(text: &str) -> usize {
 }
 
 fn span(text: String, tone: Tone) -> Span {
-    Span { text, tone }
+    Span {
+        text,
+        tone,
+        url: None,
+    }
+}
+
+/// `spans` with every whole occurrence of a link's text split into a span carrying its url.
+fn linked(spans: Vec<Span>, links: &[Link]) -> Vec<Span> {
+    if links.is_empty() {
+        return spans;
+    }
+    let mut result = Vec::new();
+    for original in spans {
+        if original.url.is_some() {
+            result.push(original);
+            continue;
+        }
+        let first = result.len();
+        let mut rest = original.text.as_str();
+        while let Some((start, link)) = next_link(rest, links) {
+            if start > 0 {
+                result.push(span(rest[..start].to_string(), original.tone));
+            }
+            result.push(Span {
+                url: Some(link.url.clone()),
+                ..span(link.text.clone(), original.tone)
+            });
+            rest = &rest[start + link.text.len()..];
+        }
+        if !rest.is_empty() || result.len() == first {
+            result.push(span(rest.to_string(), original.tone));
+        }
+    }
+    result
+}
+
+/// The earliest whole occurrence of a link's text in `text`, preferring the longest text.
+fn next_link<'a>(text: &str, links: &'a [Link]) -> Option<(usize, &'a Link)> {
+    links
+        .iter()
+        .filter(|link| !link.text.is_empty())
+        .filter_map(|link| {
+            text.match_indices(link.text.as_str())
+                .map(|(start, _)| start)
+                .find(|start| {
+                    !text[start + link.text.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(char::is_alphanumeric)
+                })
+                .map(|start| (start, link))
+        })
+        .min_by_key(|(start, link)| (*start, std::cmp::Reverse(link.text.len())))
 }
 
 fn plain(kind: LineKind, text: String) -> LayoutLine {

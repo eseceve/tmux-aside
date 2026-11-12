@@ -1,5 +1,5 @@
 use tmux_aside::layout::{LayoutLine, LayoutOptions, LineKind, help, layout};
-use tmux_aside::protocol::{Align, Row, Tone};
+use tmux_aside::protocol::{Align, Link, Row, Tone};
 use tmux_aside::view::{Density, Key, Pin, Section, View};
 
 fn lay(view: &View, width: usize, height: usize) -> Vec<LayoutLine> {
@@ -762,4 +762,69 @@ fn diff_stats_are_drawn_green_and_red_wherever_they_appear() {
         .map(|span| (span.text.as_str(), span.tone))
         .collect();
     assert_eq!(tones, [("+120", Tone::Success), ("-8", Tone::Danger)]);
+}
+
+#[test]
+fn link_texts_in_a_row_become_spans_with_their_url() {
+    let mut row = Row::new("api #1");
+    row.lines = vec!["blocked: #1, #13".to_string()];
+    row.links = vec![
+        Link::new("#1", "https://example.com/1"),
+        Link::new("#13", "https://example.com/13"),
+    ];
+    let view = View::new(vec![Section {
+        header: false,
+        ..Section::new("Deploys", vec![row], None)
+    }]);
+
+    let linked: Vec<Vec<(String, String)>> = lay(&view, 24, 2)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .filter_map(|span| Some((span.text.clone(), span.url.clone()?)))
+                .collect()
+        })
+        .collect();
+
+    assert_eq!(
+        linked,
+        [
+            vec![("#1".to_string(), "https://example.com/1".to_string())],
+            vec![
+                ("#1".to_string(), "https://example.com/1".to_string()),
+                ("#13".to_string(), "https://example.com/13".to_string()),
+            ],
+        ]
+    );
+    assert_eq!(texts(&view, 24, 2)[1].trim_end(), "blocked: #1, #13");
+}
+
+#[test]
+fn a_line_places_each_link_at_the_column_where_its_text_starts() {
+    let mut row = Row::new("api");
+    row.bar_tone = Tone::Danger;
+    row.lines = vec!["blocked: #1, #13".to_string()];
+    row.links = vec![
+        Link::new("#1", "https://example.com/1"),
+        Link::new("#13", "https://example.com/13"),
+    ];
+    let view = View::new(vec![Section {
+        header: false,
+        ..Section::new("Deploys", vec![row], None)
+    }]);
+
+    let lines = lay(&view, 24, 2);
+
+    assert_eq!(lines[0].links(), []);
+    assert_eq!(
+        lines[1].links(),
+        [
+            (11, "#1", "https://example.com/1"),
+            (15, "#13", "https://example.com/13")
+        ]
+    );
+    let text: Vec<char> = lines[1].text().chars().collect();
+    assert_eq!(text[11..13].iter().collect::<String>(), "#1");
+    assert_eq!(text[15..18].iter().collect::<String>(), "#13");
 }

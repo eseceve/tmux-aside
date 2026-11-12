@@ -1,4 +1,5 @@
 use std::io::{BufRead, BufReader, Write};
+use std::num::NonZeroU16;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -8,14 +9,17 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
+use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::crossterm::event::{
     self, DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture,
     Event as TermEvent, KeyCode, KeyEventKind, MouseButton, MouseEventKind,
 };
 use ratatui::crossterm::execute;
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use unicode_width::UnicodeWidthStr;
 
 use crate::i18n::Language;
 use crate::layout::{LayoutLine, LayoutOptions, LineKind, has_spinner, help, layout};
@@ -81,6 +85,7 @@ pub fn run(socket: Option<PathBuf>) -> Result<()> {
                     current_window: current_window.clone(),
                 };
                 targets.clear();
+                let mut hyperlinks = Vec::new();
                 let lines = match &view {
                     Some(view) if showing_help => help(view, options.width)
                         .into_iter()
@@ -88,7 +93,17 @@ pub fn run(socket: Option<PathBuf>) -> Result<()> {
                         .collect(),
                     Some(view) => layout(view, &options)
                         .into_iter()
-                        .inspect(|line| targets.push(line.target.clone()))
+                        .inspect(|line| {
+                            targets.push(line.target.clone());
+                            hyperlinks.push(
+                                line.links()
+                                    .into_iter()
+                                    .map(|(column, text, url)| {
+                                        (column, text.to_string(), url.to_string())
+                                    })
+                                    .collect::<Vec<_>>(),
+                            );
+                        })
                         .map(|line| LayoutLine {
                             selected: line.selected && focused,
                             ..line
@@ -98,6 +113,7 @@ pub fn run(socket: Option<PathBuf>) -> Result<()> {
                     None => vec![Line::from(connecting)],
                 };
                 frame.render_widget(Paragraph::new(lines), area);
+                draw_hyperlinks(frame.buffer_mut(), area, &hyperlinks);
             })?;
             let spinner_wait = view
                 .as_ref()
@@ -300,6 +316,27 @@ fn navigation_key(code: KeyCode) -> Option<Key> {
         KeyCode::Char('o') => Some(Key::Open),
         KeyCode::Char(' ') => Some(Key::Toggle),
         _ => None,
+    }
+}
+
+/// Writes each link's text as an OSC 8 hyperlink into the cell where it starts. ratatui drops
+/// escape sequences from text, so the cell holds the whole link and counts as its width.
+fn draw_hyperlinks(buffer: &mut Buffer, area: Rect, lines: &[Vec<(usize, String, String)>]) {
+    for (y, links) in lines.iter().enumerate() {
+        for (column, text, url) in links {
+            let (Ok(x), Ok(y), Some(width)) = (
+                u16::try_from(*column),
+                u16::try_from(y),
+                u16::try_from(text.width()).ok().and_then(NonZeroU16::new),
+            ) else {
+                continue;
+            };
+            let position = (area.x + x, area.y + y);
+            if let Some(cell) = buffer.cell_mut(position) {
+                cell.set_symbol(&format!("\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\"))
+                    .set_diff_option(CellDiffOption::ForcedWidth(width));
+            }
+        }
     }
 }
 

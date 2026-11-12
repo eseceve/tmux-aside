@@ -105,6 +105,25 @@ pub struct Row {
     /// Color of the filled part of the meter.
     #[serde(default, skip_serializing_if = "is_default")]
     pub meter_tone: Tone,
+    /// Text of the row or its lines drawn as terminal hyperlinks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<Link>,
+}
+
+/// Every occurrence of `text` in a row, not followed by a letter or digit, links to `url`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Link {
+    pub text: String,
+    pub url: String,
+}
+
+impl Link {
+    pub fn new(text: impl Into<String>, url: impl Into<String>) -> Self {
+        Link {
+            text: text.into(),
+            url: url.into(),
+        }
+    }
 }
 
 /// Command the sidebar runs when `key` is pressed on the row, from the sidebar's own pane.
@@ -176,6 +195,7 @@ impl Row {
             window: None,
             meter: None,
             meter_tone: Tone::Plain,
+            links: Vec::new(),
         }
     }
 

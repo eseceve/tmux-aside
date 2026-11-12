@@ -51,6 +51,7 @@ Only `text` is required.
 | `bar_tone` | tone | Color of a bar along every line of the row. `plain` (the default) draws none. |
 | `group` | string | Consecutive rows with the same group are shown under one foldable group line. |
 | `lines` | strings | Extra muted lines below the text. |
+| `links` | links | `{"text":"#12","url":"https://..."}`: every occurrence of `text` in the row or its lines, not followed by a letter or digit, is a terminal hyperlink to `url`. The terminal must support OSC 8 hyperlinks; in tmux, enable the `hyperlinks` terminal feature. |
 | `meter`, `meter_tone` | 0-100, tone | A progress bar drawn between the text and the detail. |
 | `window` | string | tmux window id (`@3`) the row belongs to. The sidebar in that window highlights it, and moving into that window selects it. |
 | `align` | `left` or `center` | Horizontal placement of the text. |
