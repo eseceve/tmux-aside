@@ -3,9 +3,10 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
+use tmux_aside::i18n::Language;
 use tmux_aside::setup::{self, Action, Ai};
 use tmux_aside::width::Width;
-use tmux_aside::{daemon, render, sidebar};
+use tmux_aside::{daemon, launch, render, sidebar};
 
 #[derive(Parser)]
 #[command(version, about = "A tmux sidebar with pluggable sections")]
@@ -60,6 +61,35 @@ enum Command {
         /// Take the default of everything not given, without asking
         #[arg(long)]
         yes: bool,
+    },
+    /// Start an agent on a task in its own branch, worktree and background window
+    Launch {
+        /// Path to the repository clone
+        repository: PathBuf,
+        /// Template the agent is launched with
+        #[arg(long)]
+        template: String,
+        /// Task reference filled into the template: a URL, an issue, a sentence
+        #[arg(long)]
+        task: String,
+        /// Branch to create
+        #[arg(long)]
+        branch: String,
+        /// Where the new branch starts [default: origin/HEAD, or HEAD without one]
+        #[arg(long)]
+        base: Option<String>,
+    },
+    /// List every launch with its worktree, window, agent and pull request
+    Status {
+        /// Print JSON instead of text
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(name = "_agent", hide = true)]
+    Agent {
+        #[arg(long)]
+        program: PathBuf,
+        prompt: PathBuf,
     },
     #[command(name = "_sync", hide = true)]
     Sync {
@@ -138,6 +168,37 @@ fn main() -> Result<()> {
             },
             defaults: yes,
         }),
+        Command::Launch {
+            repository,
+            template,
+            task,
+            branch,
+            base,
+        } => {
+            let language = Language::detect();
+            let launch = launch::run(
+                launch::Options {
+                    repository,
+                    template,
+                    task,
+                    branch,
+                    base,
+                },
+                language,
+            )?;
+            println!("{}", launch::announce(&launch, language));
+            Ok(())
+        }
+        Command::Status { json } => {
+            let launches = launch::list()?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&launches)?);
+            } else {
+                print!("{}", launch::describe(&launches, Language::detect()));
+            }
+            Ok(())
+        }
+        Command::Agent { program, prompt } => launch::start_agent(&program, &prompt),
         Command::Sync { window } => sidebar::sync_window(&window),
         Command::Reap => sidebar::reap(),
         Command::Select { window, fallback } => sidebar::select(&window, &fallback),

@@ -81,13 +81,21 @@ impl TmuxServer {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
-    pub fn aside(&self, args: &[&str]) -> Output {
-        let output = Command::new(env!("CARGO_BIN_EXE_tmux-aside"))
+    /// `tmux-aside` with `args`, run inside this server with the scratch home.
+    pub fn aside_command(&self, args: &[&str]) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tmux-aside"));
+        command
             .env("TMUX", format!("{},0,0", self.socket_path))
             .env_remove("TMUX_PANE")
             .env("TMUX_ASIDE_LANG", "en")
             .envs(self.home.envs())
-            .args(args)
+            .args(args);
+        command
+    }
+
+    pub fn aside(&self, args: &[&str]) -> Output {
+        let output = self
+            .aside_command(args)
             .output()
             .expect("failed to run tmux-aside");
         assert!(

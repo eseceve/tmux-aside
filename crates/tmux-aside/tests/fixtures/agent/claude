@@ -1,0 +1,3 @@
+#!/bin/sh
+printf '%s' "$1" > "$PWD/.agent-prompt"
+exec sleep 60

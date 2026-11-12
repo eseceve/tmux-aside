@@ -72,6 +72,25 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 | `tmux-aside focus` | Move the focus to the sidebar of the current window. Does nothing while the sidebar is off. |
 | `tmux-aside reload` | Reread the config and restart the plugins. Sections whose config did not change keep their content. |
 | `tmux-aside setup` | Bind keys in your tmux config (`~/.tmux.conf`, or the XDG one when that is the one you have; `--config` to choose) and install AI hooks, asking for each. |
+| `tmux-aside launch REPO --template NAME --task TEXT --branch BRANCH [--base REF]` | Start Claude Code on a task in its own branch, worktree and background window. See [Launching agents](#launching-agents). |
+| `tmux-aside status [--json]` | List every launch with its repository, branch, worktree, window, agent, template, task and pull request. |
+
+## Launching agents
+
+`tmux-aside launch ~/src/app --template implement --task "https://github.com/org/app/issues/7" --branch feat/dark-theme` creates the branch from `--base` (the remote's default branch, `origin/HEAD`, unless given) in a worktree next to the clone (`~/src/app__worktrees/feat-dark-theme`), opens a window in the background in your current tmux session (or in a `tmux-aside` session outside tmux) and starts Claude Code there with the template's prompt. When the agent exits, the window keeps a shell.
+
+A template is a Markdown file whose `${task}` is replaced by the task reference, which can be any text: a URL, an issue, a sentence. Its front matter says whether the agent opens a pull request:
+
+```markdown
+---
+pull_request: true
+---
+Implement ${task} and open a pull request.
+```
+
+tmux-aside ships an `implement` template. Your own go in `$XDG_CONFIG_HOME/tmux-aside/templates/NAME.md` (`~/.config/tmux-aside/templates/` by default) and replace a bundled one with the same name.
+
+Launches are recorded in `$XDG_STATE_HOME/tmux-aside/launches/`, so `tmux-aside status` still lists them after tmux or the computer restarts.
 
 ## Using the sidebar
 

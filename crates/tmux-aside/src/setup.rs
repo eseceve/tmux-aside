@@ -5,6 +5,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
 use inquire::{MultiSelect, Select, Text};
+use serde::{Deserialize, Serialize};
 
 use crate::hooks::{shell_quote, tmux_quote};
 use crate::i18n::Language;
@@ -64,8 +65,10 @@ impl Action {
     }
 }
 
-/// An AI coding agent whose status hooks `tmux-aside setup` can install.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// An AI coding agent whose status hooks `tmux-aside setup` can install, and that
+/// `tmux-aside launch` can start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Ai {
     Claude,
     Codex,
@@ -81,6 +84,15 @@ impl Ai {
             Ai::Claude => "Claude Code: agent status and plan usage",
             Ai::Codex => "Codex: agent status",
             Ai::Agy => "Antigravity: agent status",
+        }
+    }
+
+    /// The command that starts the AI, given its initial prompt as the only argument.
+    pub fn program(self) -> &'static str {
+        match self {
+            Ai::Claude => "claude",
+            Ai::Codex => "codex",
+            Ai::Agy => "agy",
         }
     }
 

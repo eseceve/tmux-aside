@@ -3,6 +3,7 @@ pub mod daemon;
 pub mod folds;
 pub mod hooks;
 pub mod i18n;
+pub mod launch;
 pub mod layout;
 pub mod plugin;
 pub mod protocol;

@@ -117,6 +117,11 @@ pub fn default_path() -> Result<PathBuf> {
     Ok(xdg_dir("XDG_CONFIG_HOME", ".config")?.join("tmux-aside/config.yaml"))
 }
 
+/// Directory of the user's own Templates: `templates` next to the config file.
+pub fn templates_dir() -> Result<PathBuf> {
+    Ok(xdg_dir("XDG_CONFIG_HOME", ".config")?.join("tmux-aside/templates"))
+}
+
 /// Directory for plugin logs: `$XDG_STATE_HOME/tmux-aside`, defaulting to `~/.local/state`.
 pub fn state_dir() -> Result<PathBuf> {
     Ok(xdg_dir("XDG_STATE_HOME", ".local/state")?.join("tmux-aside"))
