@@ -74,6 +74,9 @@ pub struct Launch {
     pub task: String,
     pub opens_pull_request: bool,
     pub pull_request: Option<String>,
+    /// Nudges already typed into the agent, each as `kind@head commit`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nudges: Vec<String>,
 }
 
 /// What `tmux-aside launch` was given on the command line.
@@ -205,6 +208,7 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
         task: options.task,
         opens_pull_request: template.opens_pull_request,
         pull_request: None,
+        nudges: Vec::new(),
     };
     write(&record, &launch)?;
     Ok(launch)

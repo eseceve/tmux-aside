@@ -11,9 +11,9 @@ use serde_json::{Value, json};
 use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage, Row, Tone};
 use tmux_aside_agents::{
-    AgentState, Branch, Diff, Grouping, LivePane, RowOptions, Sort, Status, entered, infer_status,
-    messages, next_agent, notification, parse_shortstat, project_name, pull_requests_by_branch,
-    reconcile, rows, waits_for_background_agents,
+    AgentState, Branch, Diff, Grouping, LivePane, RowOptions, Sort, Status, agents_dir, entered,
+    infer_status, messages, next_agent, notification, parse_shortstat, project_name,
+    pull_requests_by_branch, reconcile, rows, state_file, waits_for_background_agents,
 };
 
 const POLL: Duration = Duration::from_secs(1);
@@ -730,14 +730,6 @@ fn save(dir: &Path, state: &AgentState) -> Result<()> {
     std::fs::write(&temporary, serde_json::to_string(state)?)?;
     std::fs::rename(&temporary, &file)?;
     Ok(())
-}
-
-fn agents_dir() -> Result<PathBuf> {
-    Ok(tmux_aside::config::state_dir()?.join("agents"))
-}
-
-fn state_file(dir: &Path, pane: &str) -> PathBuf {
-    dir.join(format!("{}.json", pane.trim_start_matches('%')))
 }
 
 fn tmux(args: &[&str]) -> Result<String> {

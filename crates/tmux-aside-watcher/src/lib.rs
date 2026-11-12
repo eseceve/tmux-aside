@@ -3,6 +3,7 @@ use serde_json::Value;
 use tmux_aside::i18n::Language;
 use tmux_aside::launch::Launch;
 use tmux_aside::protocol::{Action, Link, Row, Tone};
+use tmux_aside_agents::{AgentState, Status};
 use tmux_aside_github::{PULL_REQUEST_FIELDS, PullRequest, State, parse_pull_request};
 
 /// Text the section shows, in one language.
@@ -91,13 +92,92 @@ impl Stage {
     }
 }
 
-/// Where a pull request stands: its stage, what is missing to reach the next one, and the
-/// tone the row is drawn with.
+/// Where a pull request stands: its stage, what is missing to reach the next one, the tone
+/// the row is drawn with, and the Nudge that would move it closer, if any.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Evaluation {
     pub stage: Stage,
     pub summary: String,
     pub tone: Tone,
+    pub nudge: Option<Nudge>,
+}
+
+/// What a Nudge asks the agent to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NudgeKind {
+    ResolveConflicts,
+    AnswerComments,
+}
+
+impl NudgeKind {
+    fn name(self) -> &'static str {
+        match self {
+            NudgeKind::ResolveConflicts => "conflicts",
+            NudgeKind::AnswerComments => "comments",
+        }
+    }
+}
+
+/// A command the Watcher types into an idle agent; the agent decides how to do it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Nudge {
+    pub kind: NudgeKind,
+    /// One line, in English like the Templates, since the agent reads it.
+    pub text: String,
+}
+
+impl Nudge {
+    fn for_pull_request(pull_request: &PullRequest) -> Option<Self> {
+        let url = &pull_request.url;
+        if pull_request.conflicting {
+            Some(Nudge {
+                kind: NudgeKind::ResolveConflicts,
+                text: format!(
+                    "The pull request {url} has conflicts with its base branch. Update the branch with its base, resolve the conflicts, run the checks and push."
+                ),
+            })
+        } else if pull_request.unresolved_threads > 0 {
+            Some(Nudge {
+                kind: NudgeKind::AnswerComments,
+                text: format!(
+                    "The pull request {url} has {} unresolved review comments. Address or answer each one, push your changes and resolve the threads you fixed.",
+                    pull_request.unresolved_threads
+                ),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+/// The Nudge to type into the agent of `followed`, with the key that records it was sent,
+/// unless one of its kind was already sent for the pull request's head commit.
+pub fn pending_nudge(followed: &Followed) -> Option<(String, Nudge)> {
+    let pull_request = followed.pull_request.as_ref()?;
+    let head = pull_request.head.as_deref()?;
+    let nudge = Nudge::for_pull_request(pull_request)?;
+    let key = format!("{}@{head}", nudge.kind.name());
+    (!followed.launch.nudges.contains(&key)).then_some((key, nudge))
+}
+
+/// An agent's tmux pane as it is now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LivePane {
+    pub pid: u32,
+    /// The command running in the foreground of the pane.
+    pub command: String,
+    /// Shown to someone: the active pane of the active window of an attached session.
+    pub viewed: bool,
+}
+
+/// Whether the agent can take a Nudge: it is neither working nor waiting for the user, its
+/// pane still runs it (the process and command its hooks registered), and nobody is looking
+/// at the pane, where they may be typing.
+pub fn is_idle(state: &AgentState, pane: &LivePane) -> bool {
+    !matches!(state.status, Some(Status::Working | Status::Waiting))
+        && state.pane_pid == pane.pid
+        && state.command == pane.command
+        && !pane.viewed
 }
 
 /// The default Ready to merge Criterion: a pull request is Ready to merge when the github
@@ -111,11 +191,12 @@ pub fn evaluate(followed: &Followed, language: Language) -> Evaluation {
             None => implementing(messages.no_pull_request, Tone::Accent),
         };
     };
-    match pull_request.state(&[]) {
+    let evaluation = match pull_request.state(&[]) {
         State::Ready => Evaluation {
             stage: Stage::ReadyToMerge,
             summary: messages.waiting_to_be_merged.to_string(),
             tone: Tone::Success,
+            nudge: None,
         },
         State::Draft => implementing(messages.draft, Tone::Accent),
         State::Failing => implementing(messages.checks_failing, Tone::Danger),
@@ -124,6 +205,10 @@ pub fn evaluate(followed: &Followed, language: Language) -> Evaluation {
         State::Blocked => implementing(messages.blocked, Tone::Warning),
         State::Pending => implementing(messages.checks_running, Tone::Accent),
         State::Review => implementing(messages.waiting_for_approval, Tone::Accent),
+    };
+    Evaluation {
+        nudge: Nudge::for_pull_request(pull_request),
+        ..evaluation
     }
 }
 
@@ -132,6 +217,7 @@ fn implementing(summary: &str, tone: Tone) -> Evaluation {
         stage: Stage::Implementing,
         summary: summary.to_string(),
         tone,
+        nudge: None,
     }
 }
 

@@ -186,6 +186,8 @@ Follows the pull request of every [launch](#launching-agents) whose template ope
   mode: stream
 ```
 
+When the pull request has conflicts, or unresolved review comments, the watcher types a Nudge into its agent asking it to resolve or answer them. It types only while the agent is idle (done, not working or waiting for you, with its status reported by the [agents](#agents) hooks) and you are not looking at its pane, and at most once per kind and head commit of the pull request, so a new push allows it again.
+
 - `--interval 30s`: how often pull requests are fetched, all of them in one GitHub query.
 - Keys on a row: `enter` jumps to the agent, `p` opens the pull request.
 

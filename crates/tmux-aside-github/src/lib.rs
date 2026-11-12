@@ -10,7 +10,7 @@ elif command -v wl-copy >/dev/null; then printf %s \"$1\" | wl-copy; \
 else printf %s \"$1\" | xclip -selection clipboard; fi";
 
 /// GraphQL fragment `PullRequestFields` selecting the fields a [`PullRequest`] is read from.
-pub const PULL_REQUEST_FIELDS: &str = "fragment PullRequestFields on PullRequest { number title url isDraft additions deletions reviewDecision createdAt updatedAt author { login } labels(first: 50) { nodes { name } } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } } }";
+pub const PULL_REQUEST_FIELDS: &str = "fragment PullRequestFields on PullRequest { number title url headRefOid isDraft additions deletions reviewDecision createdAt updatedAt author { login } labels(first: 50) { nodes { name } } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } } }";
 
 /// GraphQL query listing pull requests that match a GitHub search (`$q`), with the fields
 /// the rows show.
@@ -72,6 +72,8 @@ pub struct PullRequest {
     pub number: u64,
     pub title: String,
     pub url: String,
+    /// The commit the pull request's branch points to.
+    pub head: Option<String>,
     pub draft: bool,
     /// GitHub's review decision. Repositories that do not require reviews have none, so it
     /// comes from the latest reviews: a change request wins over an approval.
@@ -334,6 +336,8 @@ struct Node {
     number: u64,
     title: String,
     url: String,
+    #[serde(default)]
+    head_ref_oid: Option<String>,
     is_draft: bool,
     #[serde(default)]
     additions: u64,
@@ -485,6 +489,7 @@ impl Node {
             number: self.number,
             title: self.title,
             url: self.url,
+            head: self.head_ref_oid,
             draft: self.is_draft,
             additions: self.additions,
             deletions: self.deletions,

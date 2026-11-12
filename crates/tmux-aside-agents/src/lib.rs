@@ -6,6 +6,16 @@ use serde_json::Value;
 use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{Action, Row, Tone};
 
+/// Directory holding one state file per agent: `$XDG_STATE_HOME/tmux-aside/agents`.
+pub fn agents_dir() -> anyhow::Result<std::path::PathBuf> {
+    Ok(tmux_aside::config::state_dir()?.join("agents"))
+}
+
+/// The state file in `dir` of the agent in tmux pane `pane` (`%3`).
+pub fn state_file(dir: &Path, pane: &str) -> std::path::PathBuf {
+    dir.join(format!("{}.json", pane.trim_start_matches('%')))
+}
+
 /// What an agent is doing, as reported by its hooks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

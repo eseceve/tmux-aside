@@ -1946,6 +1946,7 @@ dependencies = [
  "clap",
  "serde_json",
  "tmux-aside",
+ "tmux-aside-agents",
  "tmux-aside-github",
 ]
 

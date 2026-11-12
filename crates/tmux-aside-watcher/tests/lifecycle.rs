@@ -1,34 +1,18 @@
-use std::path::PathBuf;
+mod support;
+
+use std::path::Path;
 
 use serde_json::{Value, json};
+use support::node;
 use tmux_aside::i18n::Language;
 use tmux_aside::launch::Launch;
 use tmux_aside::protocol::Tone;
-use tmux_aside::setup::Ai;
+use tmux_aside_agents::{AgentState, Status};
 use tmux_aside_github::{PullRequest, parse_pull_request};
 use tmux_aside_watcher::{
-    Followed, Stage, Target, batch_query, evaluate, github_repository, parse_batch, rows,
+    Followed, LivePane, NudgeKind, Stage, Target, batch_query, evaluate, github_repository,
+    is_idle, parse_batch, pending_nudge, rows,
 };
-
-fn node(changes: Value) -> Value {
-    let mut node = json!({
-        "number": 12,
-        "title": "Add a dark theme",
-        "url": "https://github.com/org/shop/pull/12",
-        "isDraft": false,
-        "reviewDecision": "APPROVED",
-        "mergeable": "MERGEABLE",
-        "createdAt": "2026-11-10T10:00:00Z",
-        "updatedAt": "2026-11-11T10:00:00Z",
-        "author": {"login": "octocat"},
-        "repository": {"name": "shop", "nameWithOwner": "org/shop"},
-        "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]}
-    });
-    for (key, value) in changes.as_object().unwrap() {
-        node[key] = value.clone();
-    }
-    node
-}
 
 fn pull_request(changes: Value) -> PullRequest {
     parse_pull_request(&node(changes)).unwrap()
@@ -36,18 +20,10 @@ fn pull_request(changes: Value) -> PullRequest {
 
 fn launch(branch: &str, task: &str) -> Launch {
     Launch {
-        id: format!("shop__{}", branch.replace('/', "-")),
-        repository: PathBuf::from("/src/shop"),
-        branch: branch.to_string(),
-        worktree: PathBuf::from(format!("/src/shop__worktrees/{}", branch.replace('/', "-"))),
-        session: "main".to_string(),
         window: "@4".to_string(),
         pane: "%7".to_string(),
-        ai: Ai::Claude,
-        template: "implement".to_string(),
         task: task.to_string(),
-        opens_pull_request: true,
-        pull_request: None,
+        ..support::launch(Path::new("/src/shop"), branch)
     }
 }
 
@@ -268,4 +244,125 @@ fn a_known_pull_request_that_is_no_longer_open_is_not_shown_as_missing() {
         ["Implementing · the pull request is no longer open"]
     );
     assert_eq!(rows[0].links[0].url, "https://github.com/org/shop/pull/12");
+}
+
+fn threads(resolved: &[bool]) -> Value {
+    let nodes: Vec<Value> = resolved
+        .iter()
+        .map(|resolved| json!({"isResolved": resolved}))
+        .collect();
+    json!({ "nodes": nodes })
+}
+
+#[test]
+fn a_conflict_asks_the_agent_to_resolve_it() {
+    let nudge = evaluate(
+        &followed(Some(pull_request(json!({"mergeable": "CONFLICTING"})))),
+        Language::En,
+    )
+    .nudge
+    .unwrap();
+
+    assert_eq!(nudge.kind, NudgeKind::ResolveConflicts);
+    assert!(
+        nudge.text.contains("https://github.com/org/shop/pull/12"),
+        "{}",
+        nudge.text
+    );
+    assert!(nudge.text.contains("conflicts"), "{}", nudge.text);
+}
+
+#[test]
+fn unresolved_review_comments_ask_the_agent_to_answer_them() {
+    let nudge = evaluate(
+        &followed(Some(pull_request(
+            json!({"reviewThreads": threads(&[false, true, false])}),
+        ))),
+        Language::En,
+    )
+    .nudge
+    .unwrap();
+
+    assert_eq!(nudge.kind, NudgeKind::AnswerComments);
+    assert!(
+        nudge.text.contains("2 unresolved review comments"),
+        "{}",
+        nudge.text
+    );
+}
+
+#[test]
+fn conflicts_are_asked_for_before_comments() {
+    let pr = pull_request(json!({"mergeable": "CONFLICTING", "reviewThreads": threads(&[false])}));
+
+    let nudge = evaluate(&followed(Some(pr)), Language::En).nudge.unwrap();
+
+    assert_eq!(nudge.kind, NudgeKind::ResolveConflicts);
+}
+
+#[test]
+fn a_pull_request_with_nothing_to_do_asks_for_no_nudge() {
+    let pr = pull_request(json!({"reviewThreads": threads(&[true])}));
+
+    assert_eq!(evaluate(&followed(Some(pr)), Language::En).nudge, None);
+}
+
+#[test]
+fn a_nudge_is_pending_once_per_head_commit() {
+    let mut followed = followed(Some(pull_request(json!({"mergeable": "CONFLICTING"}))));
+    let (key, _) = pending_nudge(&followed).unwrap();
+    followed.launch.nudges.push(key);
+
+    assert!(pending_nudge(&followed).is_none());
+
+    followed.pull_request = Some(pull_request(
+        json!({"mergeable": "CONFLICTING", "headRefOid": "bbb"}),
+    ));
+    assert!(pending_nudge(&followed).is_some());
+}
+
+fn agent(status: Option<Status>) -> AgentState {
+    serde_json::from_value(json!({
+        "pane_id": "%7",
+        "pane_pid": 40,
+        "command": "claude",
+        "project": "shop",
+        "window": "agent",
+        "status": status,
+        "status_ts": 0,
+        "activity_ts": 0
+    }))
+    .unwrap()
+}
+
+fn pane(pid: u32, command: &str, viewed: bool) -> LivePane {
+    LivePane {
+        pid,
+        command: command.to_string(),
+        viewed,
+    }
+}
+
+#[test]
+fn an_agent_is_idle_when_neither_working_nor_waiting_and_still_in_its_unviewed_pane() {
+    let unviewed = pane(40, "claude", false);
+    assert!(is_idle(&agent(Some(Status::Done)), &unviewed));
+    assert!(
+        is_idle(&agent(None), &unviewed),
+        "a done agent someone already looked at"
+    );
+    assert!(!is_idle(&agent(Some(Status::Working)), &unviewed));
+    assert!(!is_idle(&agent(Some(Status::Waiting)), &unviewed));
+    assert!(
+        !is_idle(&agent(Some(Status::Done)), &pane(40, "zsh", false)),
+        "the agent exited"
+    );
+    assert!(
+        !is_idle(&agent(Some(Status::Done)), &pane(41, "claude", false)),
+        "another pane"
+    );
+    assert!(
+        !is_idle(&agent(Some(Status::Done)), &pane(40, "claude", true)),
+        "someone is looking"
+    );
 }
