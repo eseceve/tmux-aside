@@ -14,8 +14,10 @@ use crate::tmux;
 const TASK_PLACEHOLDER: &str = "${task}";
 const FRONT_MATTER: &str = "---";
 const DEFAULT_SESSION: &str = "tmux-aside";
-const BUNDLED_TEMPLATES: &[(&str, &str)] =
-    &[("implement", include_str!("../templates/implement.md"))];
+const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
+    ("adopt", include_str!("../templates/adopt.md")),
+    ("implement", include_str!("../templates/implement.md")),
+];
 
 /// The prompt an agent is launched with, into which the Task reference is filled.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +61,8 @@ impl Template {
     }
 }
 
-/// An agent started by tmux-aside in its own worktree and window.
+/// An agent started by tmux-aside in its own worktree and window, or one that registered itself
+/// with `tmux-aside follow`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Launch {
     pub id: String,
@@ -70,7 +73,9 @@ pub struct Launch {
     pub window: String,
     pub pane: String,
     pub ai: Ai,
-    pub template: String,
+    /// The Template it was launched with; none for a followed agent.
+    #[serde(default)]
+    pub template: Option<String>,
     pub task: String,
     pub opens_pull_request: bool,
     pub pull_request: Option<String>,
@@ -83,9 +88,93 @@ pub struct Launch {
 pub struct Options {
     pub repository: PathBuf,
     pub template: String,
-    pub task: String,
-    pub branch: String,
-    pub base: Option<String>,
+    /// The Task reference; the pull request's URL when adopting one and none is given.
+    pub task: Option<String>,
+    pub source: Source,
+}
+
+/// Where a Launch's branch comes from.
+pub enum Source {
+    /// A new branch, created from `base` (the remote's default branch when none).
+    Branch { name: String, base: Option<String> },
+    /// The branch of an existing pull request, given by its URL.
+    PullRequest(String),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PullRequestHead {
+    url: String,
+    head_ref_name: String,
+    is_cross_repository: bool,
+    state: String,
+}
+
+/// The URL and branch of the pull request at `url`, which must be open and not come from a
+/// fork.
+fn view_pull_request(url: &str, language: Language) -> Result<PullRequestHead> {
+    let output = Command::new("gh")
+        .args([
+            "pr",
+            "view",
+            url,
+            "--json",
+            "url,headRefName,isCrossRepository,state",
+        ])
+        .output()
+        .context("failed to run gh")?;
+    if !output.status.success() {
+        bail!("gh: {}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    let head: PullRequestHead = serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("unexpected answer from gh pr view {url}"))?;
+    if head.is_cross_repository {
+        bail!((language.messages().fork_not_supported)(&head.url));
+    }
+    if head.state != "OPEN" {
+        bail!((language.messages().pull_request_not_open)(&head.url));
+    }
+    Ok(head)
+}
+
+/// The owner and name of a GitHub repository from a remote URL in the ssh
+/// (`git@github.com:o/r.git`), `ssh://` or https form; `None` for other hosts.
+pub fn github_repository(remote_url: &str) -> Option<(String, String)> {
+    let path = [
+        "git@github.com:",
+        "ssh://git@github.com/",
+        "https://github.com/",
+    ]
+    .iter()
+    .find_map(|prefix| remote_url.trim().strip_prefix(prefix))?;
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, name) = path.trim_end_matches('/').split_once('/')?;
+    (!owner.is_empty() && !name.is_empty() && !name.contains('/'))
+        .then(|| (owner.to_string(), name.to_string()))
+}
+
+/// Fails unless the pull request at `url` belongs to the GitHub repository of `repository`'s
+/// `origin`, which the Watcher searches.
+fn ensure_same_repository(url: &str, repository: &Path, language: Language) -> Result<()> {
+    let origin = git(repository, &["config", "--get", "remote.origin.url"]).unwrap_or_default();
+    let pull_request = url.split("/pull/").next().and_then(github_repository);
+    if pull_request.is_none() || pull_request != github_repository(&origin) {
+        bail!((language.messages().other_repository)(
+            url,
+            &repository.display().to_string()
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_not_followed(url: &str, language: Language) -> Result<()> {
+    if let Some(launch) = list()?
+        .into_iter()
+        .find(|launch| launch.pull_request.as_deref() == Some(url))
+    {
+        bail!((language.messages().already_followed)(url, &launch.id));
+    }
+    Ok(())
 }
 
 /// Creates the branch and its worktree next to the clone, opens a background window in the
@@ -102,18 +191,38 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
                 &options.repository.display().to_string()
             ))
         })?;
-    let base = match options.base {
-        Some(base) => base,
-        None if ref_exists(&repository, "origin/HEAD") => "origin/HEAD".to_string(),
-        None => "HEAD".to_string(),
+    let (branch, checkout, pull_request) = match options.source {
+        Source::Branch { name, base } => {
+            let base = match base {
+                Some(base) => base,
+                None if ref_exists(&repository, "origin/HEAD") => "origin/HEAD".to_string(),
+                None => "HEAD".to_string(),
+            };
+            if ref_exists(&repository, &format!("refs/heads/{name}")) {
+                bail!((messages.branch_exists)(&name));
+            }
+            if !ref_exists(&repository, &base) {
+                bail!((messages.unknown_base)(&base));
+            }
+            (name, Checkout::New { base }, None)
+        }
+        Source::PullRequest(url) => {
+            let head = view_pull_request(&url, language)?;
+            ensure_same_repository(&head.url, &repository, language)?;
+            ensure_not_followed(&head.url, language)?;
+            let checkout =
+                match ref_exists(&repository, &format!("refs/heads/{}", head.head_ref_name)) {
+                    true => Checkout::Existing,
+                    false => Checkout::Remote,
+                };
+            (head.head_ref_name, checkout, Some(head.url))
+        }
     };
-    if ref_exists(&repository, &format!("refs/heads/{}", options.branch)) {
-        bail!((messages.branch_exists)(&options.branch));
-    }
-    if !ref_exists(&repository, &base) {
-        bail!((messages.unknown_base)(&base));
-    }
-    let handle = options.branch.replace('/', "-");
+    let task = options
+        .task
+        .or_else(|| pull_request.clone())
+        .ok_or_else(|| anyhow!(messages.task_required))?;
+    let handle = branch.replace('/', "-");
     let name = file_name(&repository)?;
     let worktree = repository
         .parent()
@@ -139,22 +248,44 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
     }
 
     let worktree_arg = worktree.to_str().context("worktree path is not UTF-8")?;
-    git(
-        &repository,
-        &[
-            "worktree",
-            "add",
-            "-q",
-            "--no-track",
-            "-b",
-            &options.branch,
-            worktree_arg,
-            &base,
-        ],
-    )?;
+    match &checkout {
+        Checkout::New { base } => git(
+            &repository,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--no-track",
+                "-b",
+                &branch,
+                worktree_arg,
+                base,
+            ],
+        )?,
+        Checkout::Existing => git(
+            &repository,
+            &["worktree", "add", "-q", worktree_arg, &branch],
+        )?,
+        Checkout::Remote => {
+            git(&repository, &["fetch", "-q", "origin", &branch])?;
+            git(
+                &repository,
+                &[
+                    "worktree",
+                    "add",
+                    "-q",
+                    "--track",
+                    "-b",
+                    &branch,
+                    worktree_arg,
+                    &format!("origin/{branch}"),
+                ],
+            )?
+        }
+    };
     std::fs::create_dir_all(&directory)?;
     let prompt = directory.join(format!("{id}.prompt"));
-    std::fs::write(&prompt, template.prompt(&options.task))?;
+    std::fs::write(&prompt, template.prompt(&task))?;
     let command = [
         std::env::current_exe()?.as_path(),
         Path::new("_agent"),
@@ -198,18 +329,110 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
     let launch = Launch {
         id,
         repository,
-        branch: options.branch,
+        branch,
         worktree,
         session,
         window: window.to_string(),
         pane: pane.to_string(),
         ai,
-        template: options.template,
-        task: options.task,
-        opens_pull_request: template.opens_pull_request,
-        pull_request: None,
+        template: Some(options.template),
+        task,
+        opens_pull_request: pull_request.is_some() || template.opens_pull_request,
+        pull_request,
         nudges: Vec::new(),
     };
+    write(&record, &launch)?;
+    Ok(launch)
+}
+
+/// How the worktree's branch is checked out.
+enum Checkout {
+    /// A new branch from `base`.
+    New { base: String },
+    /// A local branch that already exists.
+    Existing,
+    /// A new local branch tracking the remote branch of the same name.
+    Remote,
+}
+
+#[derive(Deserialize)]
+struct AgentPane {
+    pane_pid: u32,
+    command: String,
+}
+
+/// Records the agent in `$TMUX_PANE` as the agent of the pull request at `url`, with the
+/// worktree it runs in, so that the Watcher follows it. Nothing is created: no worktree, no
+/// window, and no record when a check fails.
+pub fn follow(url: &str, language: Language) -> Result<Launch> {
+    let messages = language.messages();
+    let not_an_agent = || anyhow!(messages.not_an_agent_pane);
+    let pane = std::env::var("TMUX_PANE")
+        .ok()
+        .filter(|_| std::env::var_os("TMUX").is_some())
+        .ok_or_else(not_an_agent)?;
+    let agent: AgentPane =
+        std::fs::read_to_string(config::agent_state_file(&config::agents_dir()?, &pane))
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .ok_or_else(not_an_agent)?;
+    let live = tmux::run(&[
+        "display-message",
+        "-p",
+        "-t",
+        &pane,
+        "#{pane_pid}\t#{session_name}\t#{window_id}\t#{pane_current_path}",
+    ])?;
+    let fields: Vec<&str> = live.splitn(4, '\t').collect();
+    let [pid, session, window, path] = fields[..] else {
+        bail!("unexpected tmux output: {live}");
+    };
+    if pid.parse::<u32>().ok() != Some(agent.pane_pid) {
+        return Err(not_an_agent());
+    }
+    let ai: Ai = serde_json::from_value(serde_json::Value::String(agent.command))
+        .map_err(|_| not_an_agent())?;
+    let head = view_pull_request(url, language)?;
+    let path = Path::new(path);
+    let worktree = git(path, &["rev-parse", "--show-toplevel"])
+        .map(PathBuf::from)
+        .map_err(|_| anyhow!((messages.not_a_repository)(&path.display().to_string())))?;
+    let common = git(
+        path,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    let repository = Path::new(&common)
+        .parent()
+        .ok_or_else(|| anyhow!("{common} has no parent directory"))?
+        .to_path_buf();
+    let branch = git(path, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    if branch != head.head_ref_name {
+        bail!((messages.branch_mismatch)(&head.head_ref_name, &branch));
+    }
+    ensure_same_repository(&head.url, &repository, language)?;
+    ensure_not_followed(&head.url, language)?;
+    let id = format!("{}__{}", file_name(&repository)?, branch.replace('/', "-"));
+    let directory = launches_dir()?;
+    let record = directory.join(format!("{id}.json"));
+    if record.exists() {
+        bail!((messages.launch_exists)(&id));
+    }
+    let launch = Launch {
+        id,
+        repository,
+        branch,
+        worktree,
+        session: session.to_string(),
+        window: window.to_string(),
+        pane,
+        ai,
+        template: None,
+        task: head.url.clone(),
+        opens_pull_request: true,
+        pull_request: Some(head.url),
+        nudges: Vec::new(),
+    };
+    std::fs::create_dir_all(&directory)?;
     write(&record, &launch)?;
     Ok(launch)
 }
@@ -224,6 +447,11 @@ fn write(record: &Path, launch: &Launch) -> Result<()> {
     std::fs::write(&partial, serde_json::to_string_pretty(launch)?)
         .and_then(|()| std::fs::rename(&partial, record))
         .with_context(|| format!("failed to write {}", record.display()))
+}
+
+/// The line telling that `launch` is now followed.
+pub fn announce_followed(launch: &Launch, language: Language) -> String {
+    (language.messages().followed)(&launch.id)
 }
 
 /// The line telling where `launch` was opened.
@@ -288,7 +516,10 @@ pub fn describe(launches: &[Launch], language: Language) -> String {
                     messages.agent,
                     format!("{} {}", launch.ai.program(), launch.pane),
                 ),
-                (messages.template, launch.template.clone()),
+                (
+                    messages.template,
+                    launch.template.clone().unwrap_or_else(|| "-".to_string()),
+                ),
                 (messages.task, launch.task.clone()),
                 (messages.pull_request, pull_request.to_string()),
             ];

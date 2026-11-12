@@ -145,7 +145,8 @@ impl Language {
         }
     }
 
-    pub(crate) fn messages(self) -> &'static Messages {
+    /// The text tmux-aside itself shows in this language.
+    pub fn messages(self) -> &'static Messages {
         match self {
             Language::En => &EN,
             Language::Es => &ES,
@@ -154,7 +155,7 @@ impl Language {
 }
 
 /// Text the sidebar itself shows, in one language.
-pub(crate) struct Messages {
+pub struct Messages {
     pub loading: &'static str,
     pub connecting: &'static str,
     pub add_sections: fn(&str) -> String,
@@ -183,6 +184,15 @@ pub(crate) struct Messages {
     pub unknown_base: fn(&str) -> String,
     pub branch_exists: fn(&str) -> String,
     pub launch_exists: fn(&str) -> String,
+    pub fork_not_supported: fn(&str) -> String,
+    pub already_followed: fn(&str, &str) -> String,
+    pub not_an_agent_pane: &'static str,
+    pub branch_mismatch: fn(&str, &str) -> String,
+    pub followed: fn(&str) -> String,
+    pub pull_request_not_open: fn(&str) -> String,
+    pub other_repository: fn(&str, &str) -> String,
+    pub task_required: &'static str,
+    pub branch_required: &'static str,
     pub worktree_exists: fn(&str) -> String,
     pub agent_not_found: fn(&str) -> String,
     pub launched: fn(&str, &str) -> String,
@@ -228,6 +238,19 @@ const EN: Messages = Messages {
     unknown_base: |base| format!("unknown base: {base}"),
     branch_exists: |branch| format!("the branch already exists: {branch}"),
     launch_exists: |id| format!("a launch named {id} already exists"),
+    fork_not_supported: |url| format!("pull requests from forks are not supported: {url}"),
+    already_followed: |url, id| format!("{url} is already followed by {id}"),
+    not_an_agent_pane: "run follow from the pane of an AI agent whose tmux-aside hooks are installed",
+    branch_mismatch: |expected, current| {
+        format!("the pull request is on {expected}, but this pane's worktree is on {current}")
+    },
+    followed: |id| format!("following {id}"),
+    pull_request_not_open: |url| format!("{url} is not open"),
+    other_repository: |url, path| {
+        format!("{url} is not a pull request of the GitHub repository of {path}")
+    },
+    task_required: "--task is required unless --pr is given",
+    branch_required: "--branch or --pr is required",
     worktree_exists: |path| format!("the worktree already exists: {path}"),
     agent_not_found: |program| format!("{program} not found in PATH"),
     launched: |id, window| format!("launched {id} in window {window}"),
@@ -275,6 +298,21 @@ const ES: Messages = Messages {
     unknown_base: |base| format!("base desconocida: {base}"),
     branch_exists: |branch| format!("la rama ya existe: {branch}"),
     launch_exists: |id| format!("ya existe un lanzamiento llamado {id}"),
+    fork_not_supported: |url| format!("los pull requests desde forks no están soportados: {url}"),
+    already_followed: |url, id| format!("{url} ya lo sigue {id}"),
+    not_an_agent_pane: "ejecuta follow desde el panel de un agente de IA con los hooks de tmux-aside instalados",
+    branch_mismatch: |expected, current| {
+        format!(
+            "el pull request está en {expected}, pero el worktree de este panel está en {current}"
+        )
+    },
+    followed: |id| format!("siguiendo {id}"),
+    pull_request_not_open: |url| format!("{url} no está abierto"),
+    other_repository: |url, path| {
+        format!("{url} no es un pull request del repositorio de GitHub de {path}")
+    },
+    task_required: "--task es obligatorio salvo con --pr",
+    branch_required: "--branch o --pr es obligatorio",
     worktree_exists: |path| format!("el worktree ya existe: {path}"),
     agent_not_found: |program| format!("{program} no está en el PATH"),
     launched: |id, window| format!("{id} lanzado en la ventana {window}"),

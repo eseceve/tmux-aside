@@ -31,6 +31,19 @@ impl Repo {
             &["commit", "-q", "--allow-empty", "-m", "first"],
         );
         git_in(&repo.dir, &["clone", "-q", "origin", "clone"]);
+        let origin = repo.origin();
+        git_in(
+            &repo.clone(),
+            &["remote", "set-url", "origin", "git@github.com:org/shop.git"],
+        );
+        git_in(
+            &repo.clone(),
+            &[
+                "config",
+                &format!("url.{}.insteadOf", origin.display()),
+                "git@github.com:org/shop.git",
+            ],
+        );
         git_in(
             &repo.clone(),
             &["commit", "-q", "--allow-empty", "-m", "local"],
@@ -74,7 +87,56 @@ fn git_in(dir: &Path, args: &[&str]) -> String {
 
 fn with_fake_agent(command: &mut Command) -> &mut Command {
     let path = std::env::var("PATH").unwrap_or_default();
-    command.env("PATH", format!("{}:{path}", fixture("agent")))
+    command.env(
+        "PATH",
+        format!("{}:{}:{path}", fixture("agent"), fixture("gh")),
+    )
+}
+
+const PR_URL: &str = "https://github.com/org/shop/pull/7";
+
+/// Makes the fake `gh` answer `gh pr view` with an open pull request of `branch` in
+/// `org/shop`, with `changes` applied on top.
+fn answer_pull_request(command: &mut Command, repo: &Repo, branch: &str, changes: Value) {
+    let mut answer = serde_json::json!({
+        "url": PR_URL,
+        "headRefName": branch,
+        "isCrossRepository": false,
+        "state": "OPEN",
+    });
+    for (key, value) in changes.as_object().unwrap() {
+        answer[key] = value.clone();
+    }
+    let path = repo.dir.join("gh.json");
+    std::fs::write(&path, answer.to_string()).unwrap();
+    command.env("FAKE_GH_RESPONSE", path);
+}
+
+fn adopt(server: &TmuxServer, repo: &Repo, branch: &str, changes: Value) -> Output {
+    let clone = repo.clone();
+    let mut command = server.aside_command(&[
+        "launch",
+        clone.to_str().unwrap(),
+        "--template",
+        "adopt",
+        "--pr",
+        PR_URL,
+    ]);
+    with_fake_agent(&mut command);
+    answer_pull_request(&mut command, repo, branch, changes);
+    command.output().unwrap()
+}
+
+/// Pushes a branch with one commit to the origin, as a pull request's author would.
+fn push_branch(repo: &Repo, branch: &str) -> String {
+    git_in(&repo.origin(), &["checkout", "-q", "-b", branch]);
+    git_in(
+        &repo.origin(),
+        &["commit", "-q", "--allow-empty", "-m", "work"],
+    );
+    let head = git_in(&repo.origin(), &["rev-parse", "HEAD"]);
+    git_in(&repo.origin(), &["checkout", "-q", "main"]);
+    head
 }
 
 fn launch(server: &TmuxServer, repo: &Repo, extra: &[&str]) -> Output {
@@ -426,4 +488,250 @@ fn a_launch_with_the_same_name_from_another_clone_does_not_replace_the_first() {
             .to_str()
             .unwrap()
     );
+}
+
+#[test]
+fn launch_pr_checks_out_the_pull_requests_branch_and_starts_the_agent_on_it() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let head = push_branch(&repo, "feat/pr");
+
+    let output = adopt(&server, &repo, "feat/pr", serde_json::json!({}));
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let worktree = repo.worktree("feat-pr");
+    assert_eq!(git_in(&worktree, &["rev-parse", "HEAD"]), head);
+    assert_eq!(
+        git_in(&worktree, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
+        "origin/feat/pr"
+    );
+    assert_eq!(server.window_ids().len(), 2);
+    let prompt = worktree.join(".agent-prompt");
+    wait_for("the agent to start", || prompt.exists());
+    assert!(std::fs::read_to_string(prompt).unwrap().contains(PR_URL));
+    let launch = &status_json(&server)[0];
+    assert_eq!(launch["pull_request"], PR_URL);
+    assert_eq!(launch["task"], PR_URL);
+    assert_eq!(launch["template"], "adopt");
+    assert_eq!(launch["opens_pull_request"], true);
+}
+
+#[test]
+fn launch_pr_reuses_a_local_branch_of_the_pull_request() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    git_in(&repo.clone(), &["branch", "feat/local"]);
+
+    let output = adopt(&server, &repo, "feat/local", serde_json::json!({}));
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        git_in(&repo.worktree("feat-local"), &["rev-parse", "HEAD"]),
+        git_in(&repo.clone(), &["rev-parse", "feat/local"])
+    );
+}
+
+#[test]
+fn launch_pr_of_a_fork_fails_and_creates_nothing() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+
+    let output = adopt(
+        &server,
+        &repo,
+        "feat/fork",
+        serde_json::json!({"isCrossRepository": true}),
+    );
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("forks are not supported"));
+    assert_nothing_created(&server, &repo, "feat/fork");
+}
+
+/// A worktree of `branch` in the clone, with an agent pane running in it whose hooks recorded
+/// it as Claude Code. Returns the pane id.
+fn agent_in_worktree(server: &TmuxServer, repo: &Repo, branch: &str) -> String {
+    let worktree = repo.worktree(&branch.replace('/', "-"));
+    git_in(
+        &repo.clone(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            branch,
+            worktree.to_str().unwrap(),
+        ],
+    );
+    let pane = server.tmux(&[
+        "new-window",
+        "-d",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-c",
+        worktree.to_str().unwrap(),
+        "exec cat",
+    ]);
+    let pid = server.tmux(&["display-message", "-p", "-t", &pane, "#{pane_pid}"]);
+    let agents = server.home.path("state/tmux-aside/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join(format!("{}.json", pane.trim_start_matches('%'))),
+        serde_json::json!({"pane_pid": pid.parse::<u32>().unwrap(), "command": "claude"})
+            .to_string(),
+    )
+    .unwrap();
+    pane
+}
+
+fn follow(server: &TmuxServer, repo: &Repo, pane: &str, branch: &str) -> Output {
+    let mut command = server.aside_command(&["follow", PR_URL]);
+    command.env("TMUX_PANE", pane);
+    with_fake_agent(&mut command);
+    answer_pull_request(&mut command, repo, branch, serde_json::json!({}));
+    command.output().unwrap()
+}
+
+#[test]
+fn follow_records_the_agent_in_this_pane_without_creating_anything() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let pane = agent_in_worktree(&server, &repo, "feat/f");
+    let windows = server.window_ids().len();
+
+    let output = follow(&server, &repo, &pane, "feat/f");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(server.window_ids().len(), windows);
+    let launch = &status_json(&server)[0];
+    let clone = std::fs::canonicalize(repo.clone()).unwrap();
+    assert_eq!(launch["pane"], pane.as_str());
+    assert_eq!(launch["branch"], "feat/f");
+    assert_eq!(launch["repository"], clone.to_str().unwrap());
+    assert_eq!(
+        launch["worktree"],
+        std::fs::canonicalize(repo.worktree("feat-f"))
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
+    assert_eq!(launch["pull_request"], PR_URL);
+    assert_eq!(launch["ai"], "claude");
+    assert_eq!(launch["template"], serde_json::Value::Null);
+}
+
+#[test]
+fn follow_outside_an_agent_pane_fails_and_records_nothing() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let pane = agent_in_worktree(&server, &repo, "feat/f");
+    let agents = server.home.path("state/tmux-aside/agents");
+    std::fs::remove_dir_all(&agents).unwrap();
+
+    let output = follow(&server, &repo, &pane, "feat/f");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("pane of an AI agent"));
+    assert!(!launches_dir(&server.home).exists());
+}
+
+#[test]
+fn follow_outside_tmux_fails() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let pane = agent_in_worktree(&server, &repo, "feat/f");
+    let mut command = server.aside_command(&["follow", PR_URL]);
+    command.env_remove("TMUX").env("TMUX_PANE", &pane);
+
+    let output = command.output().unwrap();
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("pane of an AI agent"));
+}
+
+#[test]
+fn follow_from_another_branch_than_the_pull_requests_fails() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let pane = agent_in_worktree(&server, &repo, "feat/f");
+
+    let output = follow(&server, &repo, &pane, "feat/other");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("the pull request is on feat/other"));
+    assert!(!launches_dir(&server.home).exists());
+}
+
+#[test]
+fn a_pull_request_already_followed_cannot_be_followed_or_adopted_again() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let pane = agent_in_worktree(&server, &repo, "feat/f");
+    assert!(follow(&server, &repo, &pane, "feat/f").status.success());
+
+    let again = follow(&server, &repo, &pane, "feat/f");
+    let adopted = adopt(&server, &repo, "feat/f", serde_json::json!({}));
+
+    for output in [again, adopted] {
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("is already followed by clone__feat-f"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert_eq!(status_json(&server).len(), 1);
+}
+
+#[test]
+fn a_pull_request_that_is_not_open_cannot_be_adopted() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    push_branch(&repo, "feat/done");
+
+    let output = adopt(
+        &server,
+        &repo,
+        "feat/done",
+        serde_json::json!({"state": "MERGED"}),
+    );
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("is not open"));
+    assert_nothing_created(&server, &repo, "feat/done");
+}
+
+#[test]
+fn a_pull_request_of_another_repository_cannot_be_adopted() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    push_branch(&repo, "feat/elsewhere");
+
+    let output = adopt(
+        &server,
+        &repo,
+        "feat/elsewhere",
+        serde_json::json!({"url": "https://github.com/org/other/pull/3"}),
+    );
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("is not a pull request of the GitHub repository")
+    );
+    assert_nothing_created(&server, &repo, "feat/elsewhere");
 }

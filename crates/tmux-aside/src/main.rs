@@ -69,15 +69,24 @@ enum Command {
         /// Template the agent is launched with
         #[arg(long)]
         template: String,
-        /// Task reference filled into the template: a URL, an issue, a sentence
-        #[arg(long)]
-        task: String,
+        /// Task reference filled into the template: a URL, an issue, a sentence [default: the
+        /// pull request's URL with --pr]
+        #[arg(long, required_unless_present = "pr")]
+        task: Option<String>,
         /// Branch to create
-        #[arg(long)]
-        branch: String,
+        #[arg(long, required_unless_present = "pr", conflicts_with = "pr")]
+        branch: Option<String>,
         /// Where the new branch starts [default: origin/HEAD, or HEAD without one]
-        #[arg(long)]
+        #[arg(long, conflicts_with = "pr")]
         base: Option<String>,
+        /// Adopt an existing pull request: check out its branch instead of creating one
+        #[arg(long, value_name = "URL")]
+        pr: Option<String>,
+    },
+    /// Record the AI agent in this pane as the agent of a pull request, so it gets its Nudges
+    Follow {
+        /// URL of the pull request
+        url: String,
     },
     /// List every launch with its worktree, window, agent and pull request
     Status {
@@ -174,19 +183,30 @@ fn main() -> Result<()> {
             task,
             branch,
             base,
+            pr,
         } => {
             let language = Language::detect();
+            let source = match (pr, branch) {
+                (Some(url), _) => launch::Source::PullRequest(url),
+                (None, Some(name)) => launch::Source::Branch { name, base },
+                (None, None) => bail!(language.messages().branch_required),
+            };
             let launch = launch::run(
                 launch::Options {
                     repository,
                     template,
                     task,
-                    branch,
-                    base,
+                    source,
                 },
                 language,
             )?;
             println!("{}", launch::announce(&launch, language));
+            Ok(())
+        }
+        Command::Follow { url } => {
+            let language = Language::detect();
+            let launch = launch::follow(&url, language)?;
+            println!("{}", launch::announce_followed(&launch, language));
             Ok(())
         }
         Command::Status { json } => {

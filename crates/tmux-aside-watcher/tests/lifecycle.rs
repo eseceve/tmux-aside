@@ -481,3 +481,14 @@ fn a_worktree_that_could_not_be_removed_warns() {
     assert_eq!(evaluation.summary, "the worktree could not be removed");
     assert_eq!(evaluation.tone, Tone::Warning);
 }
+
+#[test]
+fn the_clones_own_working_tree_is_never_cleaned_up() {
+    let followed = finished("MERGED", Some(Worktree::Main));
+
+    assert!(!should_clean_up(&followed));
+    assert_eq!(
+        evaluate(&followed, Language::En).summary,
+        "the clone's own working tree is kept"
+    );
+}

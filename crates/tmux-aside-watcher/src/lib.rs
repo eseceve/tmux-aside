@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use serde_json::Value;
 use tmux_aside::i18n::Language;
 use tmux_aside::launch::Launch;
+pub use tmux_aside::launch::github_repository;
 use tmux_aside::protocol::{Action, Link, Row, Tone};
 use tmux_aside_agents::{AgentState, Status};
 use tmux_aside_github::{PULL_REQUEST_FIELDS, PullRequest, State, parse_pull_request};
@@ -20,6 +21,7 @@ pub struct Messages {
     closed: &'static str,
     worktree_removed: &'static str,
     removal_failed: &'static str,
+    main_kept: &'static str,
     uncommitted_kept: &'static str,
     unpushed_kept: &'static str,
     draft: &'static str,
@@ -44,6 +46,7 @@ const EN: Messages = Messages {
     closed: "Closed",
     worktree_removed: "worktree removed",
     removal_failed: "the worktree could not be removed",
+    main_kept: "the clone's own working tree is kept",
     uncommitted_kept: "uncommitted changes kept in the worktree",
     unpushed_kept: "unpushed commits kept in the worktree",
     draft: "draft",
@@ -68,6 +71,7 @@ const ES: Messages = Messages {
     closed: "Cerrado",
     worktree_removed: "worktree eliminado",
     removal_failed: "no se pudo eliminar el worktree",
+    main_kept: "se conserva el worktree del propio clon",
     uncommitted_kept: "cambios sin commitear conservados en el worktree",
     unpushed_kept: "commits sin push conservados en el worktree",
     draft: "borrador",
@@ -223,6 +227,7 @@ pub fn evaluate(followed: &Followed, language: Language) -> Evaluation {
             Some(Worktree::Uncommitted) => (messages.uncommitted_kept, Tone::Warning),
             Some(Worktree::Unpushed) => (messages.unpushed_kept, Tone::Warning),
             Some(Worktree::Clean) => (messages.removal_failed, Tone::Warning),
+            Some(Worktree::Main) => (messages.main_kept, done_tone),
             Some(Worktree::Missing) | None => (messages.worktree_removed, done_tone),
         };
         return Evaluation {
@@ -276,6 +281,8 @@ pub struct Followed {
 pub enum Worktree {
     /// Not a git worktree any more, such as after it was removed.
     Missing,
+    /// The clone's main working tree, where a followed agent may run; never removed.
+    Main,
     /// Nothing would be lost. Seen after a cleanup, it means the removal failed.
     Clean,
     /// Files changed and not committed.
@@ -356,22 +363,6 @@ impl Target {
             branch: branch.to_string(),
         }
     }
-}
-
-/// The owner and name of a GitHub repository from a remote URL in the ssh
-/// (`git@github.com:o/r.git`), `ssh://` or https form; `None` for other hosts.
-pub fn github_repository(remote_url: &str) -> Option<(String, String)> {
-    let path = [
-        "git@github.com:",
-        "ssh://git@github.com/",
-        "https://github.com/",
-    ]
-    .iter()
-    .find_map(|prefix| remote_url.trim().strip_prefix(prefix))?;
-    let path = path.strip_suffix(".git").unwrap_or(path);
-    let (owner, name) = path.trim_end_matches('/').split_once('/')?;
-    (!owner.is_empty() && !name.is_empty() && !name.contains('/'))
-        .then(|| (owner.to_string(), name.to_string()))
 }
 
 /// One GraphQL query asking for the newest pull requests of every target, aliased `p0`, `p1`...

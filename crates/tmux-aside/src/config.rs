@@ -127,6 +127,17 @@ pub fn state_dir() -> Result<PathBuf> {
     Ok(xdg_dir("XDG_STATE_HOME", ".local/state")?.join("tmux-aside"))
 }
 
+/// Directory holding one state file per AI agent, written by the agents' hooks:
+/// `$XDG_STATE_HOME/tmux-aside/agents`.
+pub fn agents_dir() -> Result<PathBuf> {
+    Ok(state_dir()?.join("agents"))
+}
+
+/// The state file in `dir` of the agent in tmux pane `pane` (`%3`).
+pub fn agent_state_file(dir: &Path, pane: &str) -> PathBuf {
+    dir.join(format!("{}.json", pane.trim_start_matches('%')))
+}
+
 /// Reads the config at `path`, or `None` when the file does not exist.
 pub fn load(path: &Path) -> Result<Option<Config>> {
     match std::fs::read_to_string(path) {

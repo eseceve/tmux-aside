@@ -78,10 +78,12 @@ fn run(cli: Cli) -> Result<()> {
             .map(|launch| {
                 let pull_request = pull_requests.get(&launch.id).cloned();
                 Followed {
-                    worktree: pull_request
-                        .as_ref()
-                        .filter(|pr| pr.finished())
-                        .map(|pr| inspect_worktree(&launch.worktree, pr.head.as_deref())),
+                    worktree: pull_request.as_ref().filter(|pr| pr.finished()).map(
+                        |pr| match launch.worktree == launch.repository {
+                            true => Worktree::Main,
+                            false => inspect_worktree(&launch.worktree, pr.head.as_deref()),
+                        },
+                    ),
                     pull_request,
                     launch,
                 }

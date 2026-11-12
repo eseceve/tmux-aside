@@ -217,7 +217,7 @@ pub fn launch(repository: &Path, branch: &str) -> Launch {
         window: "@1".to_string(),
         pane: "%1".to_string(),
         ai: Ai::Claude,
-        template: "implement".to_string(),
+        template: Some("implement".to_string()),
         task: format!("Task of {branch}"),
         opens_pull_request: true,
         pull_request: None,

@@ -73,6 +73,8 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 | `tmux-aside reload` | Reread the config and restart the plugins. Sections whose config did not change keep their content. |
 | `tmux-aside setup` | Bind keys in your tmux config (`~/.tmux.conf`, or the XDG one when that is the one you have; `--config` to choose) and install AI hooks, asking for each. |
 | `tmux-aside launch REPO --template NAME --task TEXT --branch BRANCH [--base REF]` | Start Claude Code on a task in its own branch, worktree and background window. See [Launching agents](#launching-agents). |
+| `tmux-aside launch REPO --template NAME --pr URL [--task TEXT]` | Start Claude Code on an existing pull request, in a worktree of its branch. |
+| `tmux-aside follow URL` | Run from an agent's pane: make that agent the one the [watcher](#watcher) follows and nudges for the pull request. |
 | `tmux-aside status [--json]` | List every launch with its repository, branch, worktree, window, agent, template, task and pull request. |
 
 ## Launching agents
@@ -88,7 +90,9 @@ pull_request: true
 Implement ${task} and open a pull request.
 ```
 
-tmux-aside ships an `implement` template. Your own go in `$XDG_CONFIG_HOME/tmux-aside/templates/NAME.md` (`~/.config/tmux-aside/templates/` by default) and replace a bundled one with the same name.
+tmux-aside ships an `implement` template and an `adopt` one, for `--pr`. Your own go in `$XDG_CONFIG_HOME/tmux-aside/templates/NAME.md` (`~/.config/tmux-aside/templates/` by default) and replace a bundled one with the same name.
+
+To take over a pull request that was opened by hand, or whose agent was lost, run `tmux-aside launch ~/src/app --template adopt --pr https://github.com/org/app/pull/12`: it checks out the pull request's branch in a new worktree (reusing the local branch when there is one) and the task reference is the pull request's URL. The pull request must be open and belong to the clone's `origin` on GitHub; pull requests from forks are not supported. When an agent is already working on a pull request, let it register itself instead: `tmux-aside follow https://github.com/org/app/pull/12`, run from its pane (an agent can run it itself), records that agent with the worktree it runs in, and creates nothing. It needs the agent's tmux-aside hooks, so that its status is known.
 
 Launches are recorded in `$XDG_STATE_HOME/tmux-aside/launches/`, so `tmux-aside status` still lists them after tmux or the computer restarts.
 
