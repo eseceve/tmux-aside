@@ -5,7 +5,7 @@ use clap::Parser;
 use jiff::Timestamp;
 use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
-use tmux_aside_github::{Part, RowOptions, SEARCH_QUERY, messages, parse_search, rows};
+use tmux_aside_github::{Part, RowOptions, messages, parse_search, rows, search_query};
 
 /// Sidebar section listing GitHub pull requests that match a search.
 #[derive(Parser)]
@@ -58,7 +58,7 @@ fn run(cli: Cli) -> Result<()> {
     let messages = messages(language);
     let output = Command::new("gh")
         .args(["api", "graphql", "-f"])
-        .arg(format!("query={SEARCH_QUERY}"))
+        .arg(format!("query={}", search_query()))
         .arg("-f")
         .arg(format!("q={}", cli.query))
         .arg("-F")

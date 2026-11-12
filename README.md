@@ -36,7 +36,7 @@ To see it with fake data, without touching your tmux, run `examples/demo/run.sh`
 
 ```sh
 cargo install --locked --git https://github.com/eseceve/tmux-aside \
-  tmux-aside tmux-aside-agents tmux-aside-github tmux-aside-usage tmux-aside-clock tmux-aside-calendar
+  tmux-aside tmux-aside-agents tmux-aside-github tmux-aside-watcher tmux-aside-usage tmux-aside-clock tmux-aside-calendar
 ```
 
 Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `tmux-aside-NAME` next to its own binary or in `PATH`.
@@ -91,6 +91,8 @@ Implement ${task} and open a pull request.
 tmux-aside ships an `implement` template. Your own go in `$XDG_CONFIG_HOME/tmux-aside/templates/NAME.md` (`~/.config/tmux-aside/templates/` by default) and replace a bundled one with the same name.
 
 Launches are recorded in `$XDG_STATE_HOME/tmux-aside/launches/`, so `tmux-aside status` still lists them after tmux or the computer restarts.
+
+The [watcher](#watcher) section follows the pull request of every launch whose template opens one.
 
 ## Using the sidebar
 
@@ -174,6 +176,18 @@ Lists the pull requests matching a [GitHub search](https://docs.github.com/en/se
 - `--labels merge:`: labels that start with the prefix (`merge:blocked · merge:depends-on`); repeat for several prefixes.
 - `--blocked-label merge:blocked`: pull requests with the label take the warning state (`⊘`), unless their checks fail, they conflict or changes were requested; repeat for several labels.
 - Keys on a row: `enter` opens the pull request, `c` copies its URL.
+
+### watcher
+
+Follows the pull request of every [launch](#launching-agents) whose template opens one, from the branch's open pull request on GitHub, with one row per launch grouped by repository. Each row shows the stage and what it is missing: `Implementing · waiting for approval`, `Implementing · conflicts`, `Ready to merge · waiting to be merged`. A pull request is Ready to merge when it is approved, its checks pass and it merges cleanly, and goes back to Implementing when that stops being true. Runs with `mode: stream`:
+
+```yaml
+- plugin: watcher
+  mode: stream
+```
+
+- `--interval 30s`: how often pull requests are fetched, all of them in one GitHub query.
+- Keys on a row: `enter` jumps to the agent, `p` opens the pull request.
 
 ### usage
 

@@ -1,0 +1,14 @@
+[package]
+name = "tmux-aside-watcher"
+description = "tmux-aside section following launched pull requests through their Lifecycle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+serde_json = "1.0.154"
+tmux-aside = { version = "0.1.0", path = "../tmux-aside" }
+tmux-aside-github = { version = "0.1.0", path = "../tmux-aside-github" }

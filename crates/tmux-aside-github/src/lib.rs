@@ -9,9 +9,16 @@ const COPY_SCRIPT: &str = "if command -v pbcopy >/dev/null; then printf %s \"$1\
 elif command -v wl-copy >/dev/null; then printf %s \"$1\" | wl-copy; \
 else printf %s \"$1\" | xclip -selection clipboard; fi";
 
+/// GraphQL fragment `PullRequestFields` selecting the fields a [`PullRequest`] is read from.
+pub const PULL_REQUEST_FIELDS: &str = "fragment PullRequestFields on PullRequest { number title url isDraft additions deletions reviewDecision createdAt updatedAt author { login } labels(first: 50) { nodes { name } } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } } }";
+
 /// GraphQL query listing pull requests that match a GitHub search (`$q`), with the fields
 /// the rows show.
-pub const SEARCH_QUERY: &str = "query($q: String!, $limit: Int!) { search(query: $q, type: ISSUE_ADVANCED, first: $limit) { nodes { ... on PullRequest { number title url isDraft additions deletions reviewDecision createdAt updatedAt author { login } labels(first: 50) { nodes { name } } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } } } } } }";
+pub fn search_query() -> String {
+    format!(
+        "query($q: String!, $limit: Int!) {{ search(query: $q, type: ISSUE_ADVANCED, first: $limit) {{ nodes {{ ...PullRequestFields }} }} }} {PULL_REQUEST_FIELDS}"
+    )
+}
 
 /// Text the section shows, in one language.
 pub struct Messages {
@@ -87,7 +94,7 @@ pub struct PullRequest {
     pub labels: Vec<String>,
 }
 
-/// Parses the response of [`SEARCH_QUERY`], skipping results that are not pull requests.
+/// Parses the response of [`search_query`], skipping results that are not pull requests.
 pub fn parse_search(output: &str) -> Result<Vec<PullRequest>> {
     let response: Value = serde_json::from_str(output)?;
     if let Some(errors) = response.get("errors").and_then(Value::as_array) {
@@ -101,11 +108,14 @@ pub fn parse_search(output: &str) -> Result<Vec<PullRequest>> {
         .pointer("/data/search/nodes")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("unexpected GitHub response"))?;
-    Ok(nodes
-        .iter()
-        .filter_map(|node| serde_json::from_value::<Node>(node.clone()).ok())
+    Ok(nodes.iter().filter_map(parse_pull_request).collect())
+}
+
+/// Reads a pull request selected with [`PULL_REQUEST_FIELDS`], or `None` when `node` is not one.
+pub fn parse_pull_request(node: &Value) -> Option<PullRequest> {
+    serde_json::from_value::<Node>(node.clone())
+        .ok()
         .map(Node::into_pull_request)
-        .collect())
 }
 
 /// Part of a pull request row that is colored by the pull request's state.

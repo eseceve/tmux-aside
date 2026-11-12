@@ -206,8 +206,20 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
         opens_pull_request: template.opens_pull_request,
         pull_request: None,
     };
-    std::fs::write(record, serde_json::to_string_pretty(&launch)?)?;
+    write(&record, &launch)?;
     Ok(launch)
+}
+
+/// Records `launch`, replacing its previous record.
+pub fn save(launch: &Launch) -> Result<()> {
+    write(&launches_dir()?.join(format!("{}.json", launch.id)), launch)
+}
+
+fn write(record: &Path, launch: &Launch) -> Result<()> {
+    let partial = record.with_extension("json.tmp");
+    std::fs::write(&partial, serde_json::to_string_pretty(launch)?)
+        .and_then(|()| std::fs::rename(&partial, record))
+        .with_context(|| format!("failed to write {}", record.display()))
 }
 
 /// The line telling where `launch` was opened.
@@ -215,7 +227,8 @@ pub fn announce(launch: &Launch, language: Language) -> String {
     (language.messages().launched)(&launch.id, &format!("{}:{}", launch.session, launch.window))
 }
 
-/// Every recorded Launch, ordered by id.
+/// Every recorded Launch, ordered by id. A record that cannot be read is skipped, with a
+/// warning on stderr, so that it hides no other Launch.
 pub fn list() -> Result<Vec<Launch>> {
     let directory = launches_dir()?;
     let entries = match std::fs::read_dir(&directory) {
@@ -232,11 +245,13 @@ pub fn list() -> Result<Vec<Launch>> {
             .extension()
             .is_some_and(|extension| extension == "json")
         {
-            let json = std::fs::read_to_string(&path)?;
-            launches.push(
-                serde_json::from_str::<Launch>(&json)
-                    .with_context(|| format!("invalid launch {}", path.display()))?,
-            );
+            match std::fs::read_to_string(&path)
+                .map_err(anyhow::Error::from)
+                .and_then(|json| Ok(serde_json::from_str::<Launch>(&json)?))
+            {
+                Ok(launch) => launches.push(launch),
+                Err(error) => eprintln!("skipped invalid launch {}: {error}", path.display()),
+            }
         }
     }
     launches.sort_by(|a, b| a.id.cmp(&b.id));
