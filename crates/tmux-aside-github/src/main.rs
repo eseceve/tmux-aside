@@ -37,6 +37,10 @@ struct Cli {
     /// repeat for several
     #[arg(long = "labels", value_name = "PREFIX")]
     label_prefixes: Vec<String>,
+    /// Color as blocked the pull requests with this label (`merge:blocked`), unless their checks
+    /// fail, they conflict or changes were requested; repeat for several
+    #[arg(long = "blocked-label", value_name = "LABEL")]
+    blocked_labels: Vec<String>,
 }
 
 fn main() -> ExitCode {
@@ -73,6 +77,7 @@ fn run(cli: Cli) -> Result<()> {
             merge_info: cli.merge_info,
             diff: cli.diff,
             label_prefixes: cli.label_prefixes,
+            blocked_labels: cli.blocked_labels,
             language,
         },
     );

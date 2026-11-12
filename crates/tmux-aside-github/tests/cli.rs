@@ -148,3 +148,25 @@ fn state_color_picks_the_parts_colored_by_the_state() {
     assert_eq!(rows[0].icon, None);
     assert_eq!(rows[0].detail_tone, Tone::Success);
 }
+
+#[test]
+fn blocked_label_colors_the_pull_requests_carrying_it_as_blocked() {
+    let blocked = ONE_PR.replacen(
+        r#""number":345"#,
+        r#""labels":{"nodes":[{"name":"merge:blocked"}]},"number":345"#,
+        1,
+    );
+    let gh = FakeGh::new(&format!("cat <<'JSON'\n{blocked}\nJSON"));
+
+    let messages = messages(&gh.run(&[
+        "--state-color",
+        "number",
+        "--blocked-label",
+        "merge:blocked",
+    ]));
+
+    let PluginMessage::Snapshot { rows, .. } = &messages[1] else {
+        panic!("expected a snapshot");
+    };
+    assert_eq!(rows[0].detail_tone, Tone::Warning);
+}

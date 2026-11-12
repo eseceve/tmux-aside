@@ -81,7 +81,7 @@ fn pull_request(draft: bool, review: &str, checks: &str) -> tmux_aside_github::P
 
 #[test]
 fn the_state_puts_failing_checks_before_reviews_and_drafts_before_everything() {
-    let state = |draft, review, checks| pull_request(draft, review, checks).state();
+    let state = |draft, review, checks| pull_request(draft, review, checks).state(&[]);
 
     assert_eq!(state(true, "CHANGES_REQUESTED", "FAILURE"), State::Draft);
     assert_eq!(state(false, "APPROVED", "FAILURE"), State::Failing);
@@ -107,7 +107,7 @@ fn without_a_review_decision_the_latest_reviews_decide() {
                 reviews,
             ),
         );
-        parse_search(&output).unwrap().remove(0).state()
+        parse_search(&output).unwrap().remove(0).state(&[])
     };
 
     assert_eq!(
@@ -291,7 +291,7 @@ fn conflicts_come_right_after_failing_checks() {
     let conflicting = |checks, review| {
         let mut pr = pull_request(false, review, checks);
         pr.conflicting = true;
-        pr.state()
+        pr.state(&[])
     };
 
     assert_eq!(conflicting("FAILURE", ""), State::Failing);
@@ -453,4 +453,55 @@ fn rows_are_shown_in_spanish() {
         .map(|action| action.label.as_deref().unwrap_or(""))
         .collect();
     assert_eq!(labels, ["abrir en el navegador", "copiar la URL"]);
+}
+
+#[test]
+fn a_blocked_label_wins_over_running_checks_and_approvals_but_not_over_what_needs_a_fix() {
+    let blocked = |draft, review, checks, conflicting| {
+        let mut pr = pull_request(draft, review, checks);
+        pr.conflicting = conflicting;
+        pr.labels = vec!["merge:blocked".to_string()];
+        pr.state(&["merge:blocked".to_string()])
+    };
+
+    assert_eq!(blocked(false, "APPROVED", "SUCCESS", false), State::Blocked);
+    assert_eq!(blocked(false, "APPROVED", "PENDING", false), State::Blocked);
+    assert_eq!(blocked(false, "REVIEW_REQUIRED", "", false), State::Blocked);
+    assert_eq!(
+        blocked(false, "CHANGES_REQUESTED", "", false),
+        State::ChangesRequested
+    );
+    assert_eq!(blocked(false, "APPROVED", "", true), State::Conflicting);
+    assert_eq!(blocked(false, "", "FAILURE", false), State::Failing);
+    assert_eq!(blocked(true, "", "", false), State::Draft);
+}
+
+#[test]
+fn a_pull_request_without_the_blocked_label_keeps_its_state() {
+    let mut pr = pull_request(false, "APPROVED", "SUCCESS");
+    pr.labels = vec!["merge:depends-on".to_string()];
+
+    assert_eq!(pr.state(&["merge:blocked".to_string()]), State::Ready);
+}
+
+#[test]
+fn a_blocked_pull_request_takes_the_warning_tone_in_its_colored_parts() {
+    let mut pr = pull_request(false, "APPROVED", "SUCCESS");
+    pr.labels = vec!["merge:blocked".to_string()];
+
+    let row = rows(
+        &[pr],
+        &RowOptions {
+            colored: vec![Part::Icon, Part::Bar],
+            blocked_labels: vec!["merge:blocked".to_string()],
+            ..Default::default()
+        },
+    )
+    .remove(0);
+
+    assert_eq!(row.icon.as_deref(), Some("⊘"));
+    assert_eq!(
+        (row.icon_tone, row.bar_tone),
+        (Tone::Warning, Tone::Warning)
+    );
 }

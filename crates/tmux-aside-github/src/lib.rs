@@ -125,6 +125,8 @@ pub enum State {
     Failing,
     Conflicting,
     ChangesRequested,
+    /// Carries a label that says it must not be merged yet.
+    Blocked,
     Pending,
     Ready,
     Review,
@@ -133,8 +135,9 @@ pub enum State {
 
 impl PullRequest {
     /// Drafts are always `Draft`; otherwise failing checks win over a change request, which
-    /// wins over running checks. Approved pull requests with passing (or no) checks are `Ready`.
-    pub fn state(&self) -> State {
+    /// wins over any of `blocked_labels`, which wins over running checks. Approved pull requests
+    /// with passing (or no) checks are `Ready`.
+    pub fn state(&self, blocked_labels: &[String]) -> State {
         let checks = self.checks.as_deref();
         let review = self.review.as_deref();
         if self.draft {
@@ -145,6 +148,12 @@ impl PullRequest {
             State::Conflicting
         } else if review == Some("CHANGES_REQUESTED") {
             State::ChangesRequested
+        } else if self
+            .labels
+            .iter()
+            .any(|label| blocked_labels.contains(label))
+        {
+            State::Blocked
         } else if checks.is_some_and(|checks| checks != "SUCCESS") {
             State::Pending
         } else if review == Some("APPROVED") {
@@ -161,6 +170,7 @@ impl State {
             State::Failing => ("×", Tone::Danger),
             State::Conflicting => ("≠", Tone::Danger),
             State::ChangesRequested => ("◆", Tone::Warning),
+            State::Blocked => ("⊘", Tone::Warning),
             State::Pending => ("◷", Tone::Accent),
             State::Ready => ("✓", Tone::Success),
             State::Review => ("○", Tone::Muted),
@@ -182,6 +192,8 @@ pub struct RowOptions {
     pub diff: bool,
     /// Add a line with the labels that start with any of these prefixes, when there is one.
     pub label_prefixes: Vec<String>,
+    /// Labels that make a pull request [`State::Blocked`].
+    pub blocked_labels: Vec<String>,
     /// Language of the text the rows add.
     pub language: Language,
 }
@@ -215,7 +227,7 @@ pub fn rows(pull_requests: &[PullRequest], options: &RowOptions) -> Vec<Row> {
             }
             Row {
                 lines,
-                ..row(pr, &options.colored, options.language)
+                ..row(pr, options)
             }
         })
         .collect()
@@ -277,9 +289,10 @@ pub fn format_age(seconds: u64) -> String {
     }
 }
 
-fn row(pr: &PullRequest, colored: &[Part], language: Language) -> Row {
-    let messages = messages(language);
-    let (icon, state_tone) = pr.state().style();
+fn row(pr: &PullRequest, options: &RowOptions) -> Row {
+    let messages = messages(options.language);
+    let colored = &options.colored;
+    let (icon, state_tone) = pr.state(&options.blocked_labels).style();
     let tone = |part: Part, otherwise: Tone| match colored.contains(&part) {
         true => state_tone,
         false => otherwise,
