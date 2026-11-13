@@ -74,6 +74,7 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 | `tmux-aside setup` | Bind keys in your tmux config (`~/.tmux.conf`, or the XDG one when that is the one you have; `--config` to choose) and install AI hooks, asking for each. |
 | `tmux-aside launch REPO --template NAME --task TEXT --branch BRANCH [--base REF]` | Start Claude Code on a task in its own branch, worktree and background window. See [Launching agents](#launching-agents). |
 | `tmux-aside launch REPO --template NAME --pr URL [--task TEXT]` | Start Claude Code on an existing pull request, in a worktree of its branch. |
+| `tmux-aside qa URL...` | Launch one QA agent, with a fresh context and the `qa` template, for pull requests that launches follow. |
 | `tmux-aside follow URL` | Run from an agent's pane: make that agent the one the [watcher](#watcher) follows and nudges for the pull request. |
 | `tmux-aside status [--json]` | List every launch with its repository, branch, worktree, window, agent, template, task and pull request. |
 
@@ -90,7 +91,7 @@ pull_request: true
 Implement ${task} and open a pull request.
 ```
 
-tmux-aside ships an `implement` template and an `adopt` one, for `--pr`. Your own go in `$XDG_CONFIG_HOME/tmux-aside/templates/NAME.md` (`~/.config/tmux-aside/templates/` by default) and replace a bundled one with the same name.
+tmux-aside ships an `implement` template, an `adopt` one for `--pr` and a `qa` one for `tmux-aside qa`. Your own go in `$XDG_CONFIG_HOME/tmux-aside/templates/NAME.md` (`~/.config/tmux-aside/templates/` by default) and replace a bundled one with the same name.
 
 To take over a pull request that was opened by hand, or whose agent was lost, run `tmux-aside launch ~/src/app --template adopt --pr https://github.com/org/app/pull/12`: it checks out the pull request's branch in a new worktree (reusing the local branch when there is one) and the task reference is the pull request's URL. The pull request must be open and belong to the clone's `origin` on GitHub; pull requests from forks are not supported. When an agent is already working on a pull request, let it register itself instead: `tmux-aside follow https://github.com/org/app/pull/12`, run from its pane (an agent can run it itself), records that agent with the worktree it runs in, and creates nothing. It needs the agent's tmux-aside hooks, so that its status is known.
 
@@ -183,21 +184,33 @@ Lists the pull requests matching a [GitHub search](https://docs.github.com/en/se
 
 ### watcher
 
-Follows the pull request of every [launch](#launching-agents) whose template opens one: the open pull request of its branch on GitHub, or the one it already followed once that is merged or closed (pull requests from forks are ignored), with one row per launch grouped by repository. Each row shows the stage and what it is missing: `Implementing · waiting for approval`, `Implementing · conflicts`, `Ready to merge · waiting to be merged`. A pull request is Ready to merge when it is approved, its checks pass and it merges cleanly, and goes back to Implementing when that stops being true. Runs with `mode: stream`:
+Follows the pull request of every [launch](#launching-agents) whose template opens one: the open pull request of its branch on GitHub, or the one it already followed once that is merged or closed (pull requests from forks are ignored), with one row per launch grouped by repository. Each row shows the stage of the Lifecycle and what it is missing: `Implementing · waiting for approval`, `Implementing · conflicts`, `Ready to merge · waiting to be merged`, `QA · waiting for QA`. By default:
+
+- **Implementing → Ready to merge**: the pull request is approved, its checks pass and it merges cleanly. It goes back to Implementing when that stops being true.
+- **QA**: once merged, the change waits to be verified in a pre-production environment. Press `q` on its row, or run `tmux-aside qa URL...`, to launch a QA agent with the `qa` template; it records its verdict as the `qa:passed` or `qa:failed` label with a comment of the cases it tested. `qa:failed` turns the row red.
+- **Ready to deploy → Deployed**: with the `qa:passed` label the change is ready to go to production, and by default it counts as deployed right away, so its row leaves. A Deployed Criterion of your own, one that knows your deploy pipeline, keeps the row at Ready to deploy until the change is in production.
+
+A closed pull request leaves too. Runs with `mode: stream`:
 
 ```yaml
 - plugin: watcher
   mode: stream
 ```
 
-When the pull request has conflicts, or unresolved review comments, the watcher types a Nudge into its agent asking it to resolve or answer them. It types only while the agent is idle (done, not working or waiting for you, with its status reported by the [agents](#agents) hooks) and you are not looking at its pane, and at most once per kind and head commit of the pull request, so a new push allows it again.
+When the pull request has conflicts, or unresolved review comments, the watcher types a Nudge into its agent asking it to resolve or answer them. It types only while the agent is idle (done, not working or waiting for you, with its status reported by the [agents](#agents) hooks) and you are not looking at its pane, and at most once per stage and head commit of the pull request, so a new push allows it again.
 
-Once the pull request is merged or closed, the watcher removes the launch's worktree and closes the agent's pane, which closes its window unless you split it (`Merged · worktree removed`). The branch is kept; files git ignores, such as `.env` files and build outputs, are removed with the worktree. When uncommitted changes or commits that are on no remote branch would be lost, it removes nothing and the row warns in yellow (`Merged · uncommitted changes kept in the worktree`) until you deal with them.
+Once the pull request is merged or closed, the watcher removes the launch's worktree and closes the agent's pane, which closes its window unless you split it. The branch is kept; files git ignores, such as `.env` files and build outputs, are removed with the worktree. When uncommitted changes or commits that are on no remote branch would be lost, it removes nothing and the row warns in yellow (`QA · uncommitted changes kept in the worktree`) until you deal with them, and stays even once deployed or closed.
 
-Each stage is decided by a Criterion, an executable you can replace per stage under `criteria:` in the config, for example to require a label or a team's review; see [Writing a Criterion](docs/criteria.md).
+Each stage is decided by a Criterion, an executable you can replace per stage under `criteria:` in the config, for example to require a team's review or to wait for your deploy pipeline; see [Writing a Criterion](docs/criteria.md). To name the QA labels differently, pass them to the default Ready to deploy Criterion:
+
+```yaml
+criteria:
+  ready_to_deploy:
+    args: ["--passed-label", "qa:ok", "--failed-label", "qa:ko"]
+```
 
 - `--interval 30s`: how often pull requests are fetched, all of them in one GitHub query.
-- Keys on a row: `enter` jumps to the agent, `p` opens the pull request.
+- Keys on a row: `enter` jumps to the agent, `p` opens the pull request, `q` launches QA for a pull request in QA.
 
 ### usage
 

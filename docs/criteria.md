@@ -2,7 +2,7 @@
 
 A Criterion decides whether a pull request reached a stage of the Lifecycle, and which Nudge, if any, would move it closer. The [watcher](../README.md#watcher) asks the Criteria of the stages after Implementing in order and stops at the first one that is not met. Each pull request's stage is evaluated again on every fetch, so a pull request falls back when a Criterion it met stops holding.
 
-tmux-aside ships a default Criterion, which uses only what GitHub tells, and you can replace it in the config:
+tmux-aside ships a default Criterion for each stage, which use only what GitHub tells; replace any of them in the config:
 
 ```yaml
 criteria:
@@ -12,7 +12,16 @@ criteria:
     timeout: 10s                       # how long it may run (the default)
 ```
 
-The watcher asks the `ready_to_merge` Criterion; the config also accepts `qa`, `ready_to_deploy` and `deployed`, the stages that follow. The default Ready to merge Criterion is `tmux-aside-watcher criterion ready-to-merge`, which goes through the same contract: met when the pull request is approved, its checks pass and it merges cleanly, with a Nudge on conflicts and then on unresolved review comments.
+The stages are `ready_to_merge`, `qa`, `ready_to_deploy` and `deployed`. Without `command`, the `args` go to the stage's default Criterion. The defaults are `tmux-aside-watcher criterion <stage>` (with dashes: `ready-to-merge`), which go through the same contract:
+
+| Stage | Met when |
+|---|---|
+| `ready_to_merge` | The pull request is approved, its checks pass and it merges cleanly. A merged pull request is always Ready to merge, whatever its Criterion answers. Asks for a Nudge on conflicts, then on unresolved review comments. |
+| `qa` | The pull request is merged. |
+| `ready_to_deploy` | It carries the `--passed-label` (`qa:passed`); the `--failed-label` (`qa:failed`) shows that QA failed. |
+| `deployed` | Always: without a Criterion that knows the deploy pipeline, a change counts as deployed as soon as it is Ready to deploy. |
+
+A pull request whose Deployed Criterion is met leaves the watcher, and so does a closed one, once its worktree is removed.
 
 ## The contract
 
@@ -30,7 +39,7 @@ The watcher runs the command with its arguments, writes one JSON object to its s
 | `summary` | string | What is missing to reach the stage, or where the pull request stands once it is met. Shown on the row as written. |
 | `tone` | tone | The row's color: `plain`, `muted`, `accent`, `success`, `warning` or `danger`. `accent` until met and `success` once met when unset. |
 | `nudge` | string | A command for the agent, such as asking it to resolve conflicts. The watcher types it into the agent while the agent is idle, at most once per stage and head commit of the pull request. Keep it on one line. |
-| `deployed` | bool | For the Deployed Criterion: whether the change is in production. |
+| `deployed` | bool | For the Deployed Criterion: whether the change is in production. It decides instead of `met` when given. |
 
 Unknown fields are ignored in both directions, and fields added later will be optional, so a Criterion keeps working across versions.
 

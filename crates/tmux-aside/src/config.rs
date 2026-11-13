@@ -88,8 +88,9 @@ pub struct Criteria {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CriterionCommand {
-    /// Path to the executable; `~` is not expanded.
-    pub command: String,
+    /// Path to the executable; `~` is not expanded. The stage's default Criterion, run with
+    /// `args`, when unset.
+    pub command: Option<String>,
     /// Arguments passed to it.
     #[serde(default)]
     pub args: Vec<String>,

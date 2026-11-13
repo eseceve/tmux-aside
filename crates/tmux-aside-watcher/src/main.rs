@@ -16,9 +16,9 @@ use tmux_aside::tmux;
 use tmux_aside_agents::{AgentState, agents_dir, state_file};
 use tmux_aside_github::PullRequest;
 use tmux_aside_watcher::{
-    Answer, Answers, Followed, LivePane, Question, Stage, Target, Worktree, batch_query,
-    choose_pull_request, github_repository, is_idle, messages, parse_batch, pending_nudge,
-    ready_to_merge, rows, should_clean_up,
+    Answer, Answers, Followed, LivePane, Question, Stage, Target, Worktree, ask_in_order,
+    batch_query, choose_pull_request, deployed, github_repository, is_idle, leaves, messages,
+    parse_batch, pending_nudge, qa, ready_to_deploy, ready_to_merge, rows, should_clean_up,
 };
 
 const TICK: Duration = Duration::from_secs(1);
@@ -47,18 +47,31 @@ enum WatcherCommand {
     Criterion {
         #[arg(value_enum)]
         stage: DefaultCriterion,
+        /// Label that QA passed, for ready-to-deploy
+        #[arg(long, default_value = "qa:passed")]
+        passed_label: String,
+        /// Label that QA failed, for ready-to-deploy
+        #[arg(long, default_value = "qa:failed")]
+        failed_label: String,
     },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
 enum DefaultCriterion {
     ReadyToMerge,
+    Qa,
+    ReadyToDeploy,
+    Deployed,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Some(WatcherCommand::Criterion { stage }) => answer(stage),
+        Some(WatcherCommand::Criterion {
+            stage,
+            passed_label,
+            failed_label,
+        }) => answer(stage, &passed_label, &failed_label),
         None => run(cli),
     };
     match result {
@@ -70,12 +83,17 @@ fn main() -> ExitCode {
     }
 }
 
-fn answer(stage: DefaultCriterion) -> Result<()> {
+fn answer(stage: DefaultCriterion, passed_label: &str, failed_label: &str) -> Result<()> {
     let language = Language::from_env();
     let question: Question = serde_json::from_reader(std::io::stdin().lock())
         .context("expected a Criterion question as JSON on stdin")?;
     let answer = match stage {
         DefaultCriterion::ReadyToMerge => ready_to_merge(&question.pull_request, language),
+        DefaultCriterion::Qa => qa(&question.pull_request, language),
+        DefaultCriterion::ReadyToDeploy => {
+            ready_to_deploy(&question.pull_request, passed_label, failed_label, language)
+        }
+        DefaultCriterion::Deployed => deployed(language),
     };
     println!("{}", serde_json::to_string(&answer)?);
     Ok(())
@@ -94,6 +112,14 @@ fn run(cli: Cli) -> Result<()> {
         for _ in std::io::stdin().lock().lines() {}
         std::process::exit(0);
     });
+    let tmux_aside = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join("tmux-aside")))
+        .filter(|sibling| sibling.is_file())
+        .map_or_else(
+            || "tmux-aside".to_string(),
+            |sibling| sibling.to_string_lossy().into_owned(),
+        );
     let mut latest = Refresh::default();
     let mut refreshing: Option<Receiver<Result<Refresh>>> = None;
     let mut fetched: Option<(Instant, Vec<String>)> = None;
@@ -153,10 +179,16 @@ fn run(cli: Cli) -> Result<()> {
                 followed.worktree = Some(Worktree::Missing);
             }
         }
+        let (gone, followed): (Vec<Followed>, Vec<Followed>) = followed
+            .into_iter()
+            .partition(|followed| leaves(followed, language));
+        for followed in gone {
+            launch::forget(&followed.launch.id)?;
+        }
         let snapshot = serde_json::to_string(&PluginMessage::Snapshot {
             title: Some(title.clone()),
             summary: None,
-            rows: rows(&followed, language),
+            rows: rows(&followed, &tmux_aside, language),
         })?;
         if snapshot != last {
             println!("{snapshot}");
@@ -204,21 +236,31 @@ fn criteria() -> Result<Vec<(Stage, Vec<String>, Duration)>> {
     let exe = std::env::current_exe()
         .map(|exe| exe.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "tmux-aside-watcher".to_string());
-    let default = |name: &str| {
-        (
-            vec![exe.clone(), "criterion".to_string(), name.to_string()],
-            DEFAULT_TIMEOUT,
-        )
+    let default = |name: &str| vec![exe.clone(), "criterion".to_string(), name.to_string()];
+    let command = |stage: Stage, configured: Option<CriterionCommand>, name: &str| match configured
+    {
+        Some(criterion) => {
+            let program = criterion
+                .command
+                .map_or_else(|| default(name), |command| vec![command]);
+            (stage, [program, criterion.args].concat(), criterion.timeout)
+        }
+        None => (stage, default(name), DEFAULT_TIMEOUT),
     };
-    let command = |configured: Option<CriterionCommand>, name: &str| match configured {
-        Some(criterion) => (
-            [vec![criterion.command], criterion.args].concat(),
-            criterion.timeout,
+    Ok(vec![
+        command(
+            Stage::ReadyToMerge,
+            configured.ready_to_merge,
+            "ready-to-merge",
         ),
-        None => default(name),
-    };
-    let (ready_command, ready_timeout) = command(configured.ready_to_merge, "ready-to-merge");
-    Ok(vec![(Stage::ReadyToMerge, ready_command, ready_timeout)])
+        command(Stage::Qa, configured.qa, "qa"),
+        command(
+            Stage::ReadyToDeploy,
+            configured.ready_to_deploy,
+            "ready-to-deploy",
+        ),
+        command(Stage::Deployed, configured.deployed, "deployed"),
+    ])
 }
 
 /// Asks the Criteria of every open pull request, all pull requests at once, each one's stages
@@ -231,24 +273,22 @@ fn ask_criteria(
     std::thread::scope(|scope| {
         let asked: Vec<_> = pull_requests
             .iter()
-            .filter(|(_, pr)| !pr.finished())
+            .filter(|(_, pr)| !pr.closed)
             .map(|(id, pr)| {
                 let handle = scope.spawn(move || {
-                    let mut answers = Vec::new();
-                    for (stage, command, timeout) in criteria {
+                    let stages: Vec<Stage> = criteria.iter().map(|(stage, _, _)| *stage).collect();
+                    ask_in_order(&stages, pr, |stage| {
+                        let (_, command, timeout) = criteria
+                            .iter()
+                            .find(|(of, _, _)| *of == stage)
+                            .expect("a Criterion per stage");
                         let question = Question {
                             stage: stage.key().to_string(),
                             url: pr.url.clone(),
                             pull_request: pr.clone(),
                         };
-                        let answer = ask(command, &question, *timeout, language);
-                        let go_on = matches!(&answer, Ok(answer) if answer.met);
-                        answers.push((*stage, answer));
-                        if !go_on {
-                            break;
-                        }
-                    }
-                    answers
+                        ask(command, &question, *timeout, language)
+                    })
                 });
                 (id.clone(), handle)
             })

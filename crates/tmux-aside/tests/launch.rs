@@ -735,3 +735,71 @@ fn a_pull_request_of_another_repository_cannot_be_adopted() {
     );
     assert_nothing_created(&server, &repo, "feat/elsewhere");
 }
+
+#[test]
+fn qa_launches_one_qa_agent_for_followed_pull_requests() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let pane = agent_in_worktree(&server, &repo, "feat/f");
+    assert!(follow(&server, &repo, &pane, "feat/f").status.success());
+    let windows = server.window_ids().len();
+
+    let mut command = server.aside_command(&["qa", PR_URL]);
+    with_fake_agent(&mut command);
+    let output = command.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(server.window_ids().len(), windows + 1);
+    let prompt = repo.clone().join(".agent-prompt");
+    wait_for("the QA agent to start", || prompt.exists());
+    let prompt = std::fs::read_to_string(prompt).unwrap();
+    assert!(prompt.contains(PR_URL), "{prompt}");
+    assert!(prompt.contains("--add-label qa:passed"), "{prompt}");
+    let qa = status_json(&server)
+        .into_iter()
+        .find(|launch| launch["template"] == "qa")
+        .expect("no QA launch");
+    assert_eq!(qa["task"], PR_URL);
+    assert_eq!(qa["opens_pull_request"], false);
+}
+
+#[test]
+fn qa_of_a_pull_request_no_launch_follows_fails() {
+    let server = TmuxServer::start(1);
+
+    let mut command = server.aside_command(&["qa", PR_URL]);
+    with_fake_agent(&mut command);
+    let output = command.output().unwrap();
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("is not followed by any launch"));
+    assert_eq!(server.window_ids().len(), 1);
+}
+
+#[test]
+fn the_qa_agent_is_told_the_labels_the_config_names() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    server.home.write_config(
+        "criteria:\n  ready_to_deploy:\n    args: [\"--passed-label\", \"qa:ok\", \"--failed-label\", \"qa:ko\"]\n",
+    );
+    let pane = agent_in_worktree(&server, &repo, "feat/f");
+    assert!(follow(&server, &repo, &pane, "feat/f").status.success());
+
+    let mut command = server.aside_command(&["qa", PR_URL]);
+    with_fake_agent(&mut command);
+    assert!(command.output().unwrap().status.success());
+
+    let prompt = repo.clone().join(".agent-prompt");
+    wait_for("the QA agent to start", || prompt.exists());
+    let prompt = std::fs::read_to_string(prompt).unwrap();
+    assert!(
+        prompt.contains("--add-label qa:ok --remove-label qa:ko"),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("qa:passed"), "{prompt}");
+}

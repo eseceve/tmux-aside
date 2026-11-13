@@ -227,7 +227,7 @@ fn parses_the_criteria_that_replace_the_defaults() {
     assert_eq!(
         config.criteria.ready_to_merge,
         Some(CriterionCommand {
-            command: "/opt/ready".to_string(),
+            command: Some("/opt/ready".to_string()),
             args: vec!["--team".to_string(), "web".to_string()],
             timeout: Duration::from_secs(2),
         })

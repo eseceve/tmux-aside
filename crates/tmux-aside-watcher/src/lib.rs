@@ -18,11 +18,18 @@ pub struct Messages {
     implementing: &'static str,
     ready_to_merge: &'static str,
     no_pull_request: &'static str,
-    merged: &'static str,
+    qa: &'static str,
+    ready_to_deploy: &'static str,
+    deployed: &'static str,
     closed: &'static str,
+    merged: &'static str,
+    waiting_for_qa: &'static str,
+    qa_failed: &'static str,
+    waiting_to_be_deployed: &'static str,
+    in_production: &'static str,
+    launch_qa: &'static str,
     worktree_removed: &'static str,
     removal_failed: &'static str,
-    main_kept: &'static str,
     uncommitted_kept: &'static str,
     unpushed_kept: &'static str,
     draft: &'static str,
@@ -55,11 +62,18 @@ const EN: Messages = Messages {
     implementing: "Implementing",
     ready_to_merge: "Ready to merge",
     no_pull_request: "no pull request yet",
-    merged: "Merged",
+    qa: "QA",
+    ready_to_deploy: "Ready to deploy",
+    deployed: "Deployed",
     closed: "Closed",
+    merged: "merged",
+    waiting_for_qa: "waiting for QA",
+    qa_failed: "QA failed",
+    waiting_to_be_deployed: "waiting to be deployed",
+    in_production: "in production",
+    launch_qa: "launch QA",
     worktree_removed: "worktree removed",
     removal_failed: "the worktree could not be removed",
-    main_kept: "the clone's own working tree is kept",
     uncommitted_kept: "uncommitted changes kept in the worktree",
     unpushed_kept: "unpushed commits kept in the worktree",
     draft: "draft",
@@ -87,11 +101,18 @@ const ES: Messages = Messages {
     implementing: "Implementando",
     ready_to_merge: "Listo para mergear",
     no_pull_request: "aún sin pull request",
-    merged: "Mergeado",
+    qa: "QA",
+    ready_to_deploy: "Listo para desplegar",
+    deployed: "Desplegado",
     closed: "Cerrado",
+    merged: "mergeado",
+    waiting_for_qa: "esperando QA",
+    qa_failed: "QA falló",
+    waiting_to_be_deployed: "esperando el despliegue",
+    in_production: "en producción",
+    launch_qa: "lanzar QA",
     worktree_removed: "worktree eliminado",
     removal_failed: "no se pudo eliminar el worktree",
-    main_kept: "se conserva el worktree del propio clon",
     uncommitted_kept: "cambios sin commitear conservados en el worktree",
     unpushed_kept: "commits sin push conservados en el worktree",
     draft: "borrador",
@@ -128,9 +149,13 @@ pub enum Stage {
     Implementing,
     /// The pull request meets its merge criteria and only waits for someone to merge it.
     ReadyToMerge,
-    /// The pull request was merged.
-    Merged,
-    /// The pull request was closed without being merged.
+    /// The merged change is verified in a pre-production environment.
+    Qa,
+    /// QA passed and the change only waits to be promoted to production.
+    ReadyToDeploy,
+    /// The change reached production; the pull request leaves the Lifecycle.
+    Deployed,
+    /// The pull request was closed without being merged; it leaves the Lifecycle.
     Closed,
 }
 
@@ -140,7 +165,9 @@ impl Stage {
         match self {
             Stage::Implementing => "implementing",
             Stage::ReadyToMerge => "ready_to_merge",
-            Stage::Merged => "merged",
+            Stage::Qa => "qa",
+            Stage::ReadyToDeploy => "ready_to_deploy",
+            Stage::Deployed => "deployed",
             Stage::Closed => "closed",
         }
     }
@@ -150,7 +177,9 @@ impl Stage {
         match self {
             Stage::Implementing => messages.implementing,
             Stage::ReadyToMerge => messages.ready_to_merge,
-            Stage::Merged => messages.merged,
+            Stage::Qa => messages.qa,
+            Stage::ReadyToDeploy => messages.ready_to_deploy,
+            Stage::Deployed => messages.deployed,
             Stage::Closed => messages.closed,
         }
     }
@@ -203,6 +232,9 @@ pub struct Answer {
 /// then on unresolved review comments.
 pub fn ready_to_merge(pull_request: &PullRequest, language: Language) -> Answer {
     let messages = messages(language);
+    if pull_request.merged {
+        return met(messages.merged);
+    }
     let (met, summary, tone) = match pull_request.state(&[]) {
         State::Ready => (true, messages.waiting_to_be_merged, Tone::Success),
         State::Draft => (false, messages.draft, Tone::Accent),
@@ -235,6 +267,94 @@ pub fn ready_to_merge(pull_request: &PullRequest, language: Language) -> Answer 
     }
 }
 
+fn met(summary: &str) -> Answer {
+    Answer {
+        met: true,
+        summary: Some(summary.to_string()),
+        ..Answer::default()
+    }
+}
+
+/// The default QA Criterion: met once the pull request is merged.
+pub fn qa(pull_request: &PullRequest, language: Language) -> Answer {
+    let messages = messages(language);
+    match pull_request.merged {
+        true => met(messages.waiting_for_qa),
+        false => Answer {
+            met: false,
+            summary: Some(messages.waiting_to_be_merged.to_string()),
+            tone: Some(Tone::Success),
+            ..Answer::default()
+        },
+    }
+}
+
+/// The default Ready to deploy Criterion: met once the pull request carries the `passed`
+/// label; the `failed` label shows that QA failed.
+pub fn ready_to_deploy(
+    pull_request: &PullRequest,
+    passed: &str,
+    failed: &str,
+    language: Language,
+) -> Answer {
+    let messages = messages(language);
+    let labeled = |name: &str| pull_request.labels.iter().any(|label| label == name);
+    if labeled(passed) {
+        met(messages.waiting_to_be_deployed)
+    } else if labeled(failed) {
+        Answer {
+            met: false,
+            summary: Some(messages.qa_failed.to_string()),
+            tone: Some(Tone::Danger),
+            ..Answer::default()
+        }
+    } else {
+        Answer {
+            met: false,
+            summary: Some(messages.waiting_for_qa.to_string()),
+            ..Answer::default()
+        }
+    }
+}
+
+/// The default Deployed Criterion: a pull request counts as deployed as soon as it is Ready to
+/// deploy, since tmux-aside knows no deploy pipeline.
+pub fn deployed(language: Language) -> Answer {
+    Answer {
+        deployed: Some(true),
+        ..met(messages(language).in_production)
+    }
+}
+
+/// Whether `answer` means `stage` is reached for `pull_request`: `deployed` decides for
+/// Deployed, when given, and a merged pull request is always Ready to merge.
+pub fn reached(stage: Stage, answer: &Answer, pull_request: &PullRequest) -> bool {
+    match stage {
+        Stage::ReadyToMerge => answer.met || pull_request.merged,
+        Stage::Deployed => answer.deployed.unwrap_or(answer.met),
+        _ => answer.met,
+    }
+}
+
+/// Asks `ask` for the answer of each of `stages` in Lifecycle order, up to the first one
+/// `pull_request` does not reach or whose Criterion fails.
+pub fn ask_in_order(
+    stages: &[Stage],
+    pull_request: &PullRequest,
+    mut ask: impl FnMut(Stage) -> Result<Answer, String>,
+) -> Answers {
+    let mut answers = Vec::new();
+    for &stage in stages {
+        let answer = ask(stage);
+        let go_on = matches!(&answer, Ok(answer) if reached(stage, answer, pull_request));
+        answers.push((stage, answer));
+        if !go_on {
+            break;
+        }
+    }
+    answers
+}
+
 /// The Nudge to type into the agent of `followed`, with the key that records it was sent,
 /// unless one was already sent at its stage for the pull request's head commit.
 pub fn pending_nudge(followed: &Followed, language: Language) -> Option<(String, String)> {
@@ -265,36 +385,45 @@ pub fn is_idle(state: &AgentState, pane: &LivePane) -> bool {
         && !pane.viewed
 }
 
-/// Where `followed` stands. An open pull request starts at Implementing and moves through
-/// each stage whose Criterion answered met, in Lifecycle order; the first unmet one gives the
-/// summary, tone and Nudge, and a failed one shows its error. A merged or closed one says
-/// whether its worktree was removed or what kept it.
+/// Where `followed` stands. A pull request starts at Implementing and moves through each stage
+/// whose Criterion answered met, in Lifecycle order; the first unmet one gives the summary,
+/// tone and Nudge (the last met one's Nudge when it asks for none), and a failed one shows its
+/// error. A closed one leaves the Lifecycle; a worktree kept after the merge or the close
+/// replaces the summary with what it keeps.
 pub fn evaluate(followed: &Followed, language: Language) -> Evaluation {
     let messages = messages(language);
     let Some(pull_request) = &followed.pull_request else {
         return implementing(messages.no_pull_request, Tone::Accent);
     };
-    if pull_request.finished() {
-        let (stage, done_tone) = match pull_request.merged {
-            true => (Stage::Merged, Tone::Success),
-            false => (Stage::Closed, Tone::Muted),
-        };
-        let (summary, tone) = match followed.worktree {
-            Some(Worktree::Uncommitted) => (messages.uncommitted_kept, Tone::Warning),
-            Some(Worktree::Unpushed) => (messages.unpushed_kept, Tone::Warning),
-            Some(Worktree::Clean) => (messages.removal_failed, Tone::Warning),
-            Some(Worktree::Main) => (messages.main_kept, done_tone),
-            Some(Worktree::Missing) | None => (messages.worktree_removed, done_tone),
-        };
+    let kept = match followed.worktree {
+        Some(Worktree::Uncommitted) => Some(messages.uncommitted_kept),
+        Some(Worktree::Unpushed) => Some(messages.unpushed_kept),
+        Some(Worktree::Clean) => Some(messages.removal_failed),
+        _ => None,
+    };
+    if pull_request.closed {
         return Evaluation {
-            stage,
-            summary: summary.to_string(),
-            tone,
+            stage: Stage::Closed,
+            summary: kept.unwrap_or(messages.worktree_removed).to_string(),
+            tone: kept.map_or(Tone::Muted, |_| Tone::Warning),
             nudge: None,
         };
     }
+    let evaluation = walk(followed, pull_request, language);
+    match kept {
+        Some(kept) if evaluation.tone != Tone::Danger => Evaluation {
+            summary: kept.to_string(),
+            tone: Tone::Warning,
+            ..evaluation
+        },
+        _ => evaluation,
+    }
+}
+
+fn walk(followed: &Followed, pull_request: &PullRequest, language: Language) -> Evaluation {
+    let messages = messages(language);
     let mut stage = Stage::Implementing;
-    let mut reached: Option<&Answer> = None;
+    let mut last: Option<&Answer> = None;
     for (next, answer) in &followed.answers {
         match answer {
             Err(error) => {
@@ -305,21 +434,24 @@ pub fn evaluate(followed: &Followed, language: Language) -> Evaluation {
                     nudge: None,
                 };
             }
-            Ok(answer) if answer.met => {
+            Ok(answer) if reached(*next, answer, pull_request) => {
                 stage = *next;
-                reached = Some(answer);
+                last = Some(answer);
             }
             Ok(answer) => {
                 return Evaluation {
                     stage,
                     summary: answer.summary.clone().unwrap_or_default(),
                     tone: answer.tone.unwrap_or(Tone::Accent),
-                    nudge: answer.nudge.clone(),
+                    nudge: answer
+                        .nudge
+                        .clone()
+                        .or_else(|| last.and_then(|reached| reached.nudge.clone())),
                 };
             }
         }
     }
-    match reached {
+    match last {
         Some(answer) => Evaluation {
             stage,
             summary: answer.summary.clone().unwrap_or_default(),
@@ -370,6 +502,15 @@ pub enum Worktree {
     Unpushed,
 }
 
+/// Whether `followed` leaves the Watcher: its pull request was deployed or closed, and its
+/// worktree removed or never its own.
+pub fn leaves(followed: &Followed, language: Language) -> bool {
+    matches!(
+        evaluate(followed, language).stage,
+        Stage::Deployed | Stage::Closed
+    ) && matches!(followed.worktree, Some(Worktree::Missing | Worktree::Main))
+}
+
 /// Whether the Watcher removes the Launch's worktree and closes its window now: only once the
 /// pull request is merged or closed, and only when nothing would be lost.
 pub fn should_clean_up(followed: &Followed) -> bool {
@@ -381,8 +522,9 @@ pub fn should_clean_up(followed: &Followed) -> bool {
 }
 
 /// One row per followed Launch, in the given order and grouped by repository. Enter jumps to
-/// the agent's pane; `p` opens the pull request in the browser.
-pub fn rows(followed: &[Followed], language: Language) -> Vec<Row> {
+/// the agent's pane; `p` opens the pull request in the browser; `q`, in QA, launches a QA
+/// agent for it with `tmux_aside`, the path to the `tmux-aside` command.
+pub fn rows(followed: &[Followed], tmux_aside: &str, language: Language) -> Vec<Row> {
     let messages = messages(language);
     followed
         .iter()
@@ -407,6 +549,12 @@ pub fn rows(followed: &[Followed], language: Language) -> Vec<Row> {
                 }
                 None => Row::new(launch.task.clone()),
             };
+            if let (Stage::Qa, Some(pr)) = (evaluation.stage, &followed.pull_request) {
+                actions.push(Action {
+                    label: Some(messages.launch_qa.to_string()),
+                    ..Action::new("q", &[tmux_aside, "qa", &pr.url])
+                });
+            }
             row.detail_tone = evaluation.tone;
             row.bar_tone = evaluation.tone;
             row.lines = vec![format!(

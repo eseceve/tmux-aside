@@ -114,7 +114,11 @@ fn a_failing_hanging_or_invalid_criterion_shows_its_error_on_its_row_only() {
         });
         assert_eq!(rows[0].lines, [format!("Implementing · {error}")], "{mode}");
         assert_eq!(rows[0].bar_tone, Tone::Danger);
-        assert_eq!(rows[1].lines, ["Ready to merge · fine"], "{mode}");
+        assert_eq!(
+            rows[1].lines,
+            ["Ready to merge · waiting to be merged"],
+            "{mode}"
+        );
     }
 }
 

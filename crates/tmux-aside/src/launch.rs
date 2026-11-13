@@ -17,7 +17,9 @@ const DEFAULT_SESSION: &str = "tmux-aside";
 const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
     ("adopt", include_str!("../templates/adopt.md")),
     ("implement", include_str!("../templates/implement.md")),
+    (QA_TEMPLATE, include_str!("../templates/qa.md")),
 ];
+const QA_TEMPLATE: &str = "qa";
 
 /// The prompt an agent is launched with, into which the Task reference is filled.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,11 +237,7 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
     let ai = Ai::Claude;
     let program = find_on_path(ai.program())
         .ok_or_else(|| anyhow!((messages.agent_not_found)(ai.program())))?;
-    let session = match (std::env::var_os("TMUX"), std::env::var("TMUX_PANE")) {
-        (Some(_), Ok(pane)) => tmux::run(&["display-message", "-p", "-t", &pane, "#S"])?,
-        (Some(_), Err(_)) => tmux::run(&["display-message", "-p", "#S"])?,
-        (None, _) => DEFAULT_SESSION.to_string(),
-    };
+    let session = current_session()?;
     let id = format!("{name}__{handle}");
     let directory = launches_dir()?;
     let record = directory.join(format!("{id}.json"));
@@ -286,24 +284,65 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
     std::fs::create_dir_all(&directory)?;
     let prompt = directory.join(format!("{id}.prompt"));
     std::fs::write(&prompt, template.prompt(&task))?;
+    let (window, pane) = open_agent_window(&session, &handle, &worktree, &program, &prompt)?;
+
+    let launch = Launch {
+        id,
+        repository,
+        branch,
+        worktree,
+        session,
+        window,
+        pane,
+        ai,
+        template: Some(options.template),
+        task,
+        opens_pull_request: pull_request.is_some() || template.opens_pull_request,
+        pull_request,
+        nudges: Vec::new(),
+    };
+    write(&record, &launch)?;
+    Ok(launch)
+}
+
+/// The tmux session new windows open in: the current one inside tmux, the default one
+/// outside.
+fn current_session() -> Result<String> {
+    match (std::env::var_os("TMUX"), std::env::var("TMUX_PANE")) {
+        (Some(_), Ok(pane)) => tmux::run(&["display-message", "-p", "-t", &pane, "#S"]),
+        (Some(_), Err(_)) => tmux::run(&["display-message", "-p", "#S"]),
+        (None, _) => Ok(DEFAULT_SESSION.to_string()),
+    }
+}
+
+/// Opens a background window named `name` in `directory`, creating `session` if missing, and
+/// starts `program` there with the prompt in `prompt`. Returns the window's and pane's ids.
+fn open_agent_window(
+    session: &str,
+    name: &str,
+    directory: &Path,
+    program: &Path,
+    prompt: &Path,
+) -> Result<(String, String)> {
     let command = [
         std::env::current_exe()?.as_path(),
         Path::new("_agent"),
         Path::new("--program"),
-        &program,
-        &prompt,
+        program,
+        prompt,
     ]
     .iter()
     .map(|part| part.to_str().map(shell_quote))
     .collect::<Option<Vec<_>>>()
     .context("path is not UTF-8")?
     .join(" ");
+    let directory = directory.to_str().context("path is not UTF-8")?;
     let target = format!("={session}:");
     let placement: [&str; 3] = if tmux::run(&["has-session", "-t", &format!("={session}")]).is_ok()
     {
         ["new-window", "-t", &target]
     } else {
-        ["new-session", "-s", &session]
+        ["new-session", "-s", session]
     };
     let opened = tmux::run(
         &[
@@ -314,9 +353,9 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
                 "-F",
                 "#{window_id} #{pane_id}",
                 "-n",
-                &handle,
+                name,
                 "-c",
-                worktree_arg,
+                directory,
                 &command,
             ],
         ]
@@ -325,24 +364,108 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
     let (window, pane) = opened
         .split_once(' ')
         .ok_or_else(|| anyhow!("unexpected tmux output: {opened}"))?;
+    Ok((window.to_string(), pane.to_string()))
+}
 
+/// Launches one QA agent, with a fresh context and the `qa` Template, for the pull requests at
+/// `urls`, in a window at the clone of the first one. Each must be followed by a Launch. The
+/// Task reference lists the URLs. The QA Launch opens no pull request of its own.
+pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
+    let messages = language.messages();
+    let template = find_template(QA_TEMPLATE)?
+        .ok_or_else(|| anyhow!((messages.unknown_template)(QA_TEMPLATE)))?;
+    let launches = list()?;
+    let mut repository = None;
+    let mut numbers = Vec::new();
+    for url in urls {
+        let followed = launches
+            .iter()
+            .find(|launch| launch.pull_request.as_deref() == Some(url.as_str()))
+            .ok_or_else(|| anyhow!((messages.not_followed)(url)))?;
+        repository.get_or_insert_with(|| followed.repository.clone());
+        numbers.push(pull_request_number(url).to_string());
+    }
+    let repository = repository.ok_or_else(|| anyhow!(messages.no_pull_requests))?;
+    let ai = Ai::Claude;
+    let program = find_on_path(ai.program())
+        .ok_or_else(|| anyhow!((messages.agent_not_found)(ai.program())))?;
+    let session = current_session()?;
+    let handle = format!("qa-{}", numbers.join("-"));
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or_default();
+    let id = format!("{}__{handle}-{started}", file_name(&repository)?);
+    let directory = launches_dir()?;
+    std::fs::create_dir_all(&directory)?;
+    let task = urls.join(" ");
+    let (passed, failed) = qa_labels()?;
+    let prompt = directory.join(format!("{id}.prompt"));
+    std::fs::write(
+        &prompt,
+        template
+            .prompt(&task)
+            .replace("${passed_label}", &passed)
+            .replace("${failed_label}", &failed),
+    )?;
+    let (window, pane) = open_agent_window(&session, &handle, &repository, &program, &prompt)?;
     let launch = Launch {
         id,
+        branch: git(&repository, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default(),
+        worktree: repository.clone(),
         repository,
-        branch,
-        worktree,
         session,
-        window: window.to_string(),
-        pane: pane.to_string(),
+        window,
+        pane,
         ai,
-        template: Some(options.template),
+        template: Some(QA_TEMPLATE.to_string()),
         task,
-        opens_pull_request: pull_request.is_some() || template.opens_pull_request,
-        pull_request,
+        opens_pull_request: false,
+        pull_request: None,
         nudges: Vec::new(),
     };
-    write(&record, &launch)?;
+    write(&directory.join(format!("{}.json", launch.id)), &launch)?;
     Ok(launch)
+}
+
+/// The labels that record QA's verdict: those given to the Ready to deploy Criterion in the
+/// config, or `qa:passed` and `qa:failed`.
+fn qa_labels() -> Result<(String, String)> {
+    let args = config::load(&config::default_path()?)?
+        .and_then(|config| config.criteria.ready_to_deploy)
+        .map(|criterion| criterion.args)
+        .unwrap_or_default();
+    let label = |flag: &str, default: &str| {
+        args.iter()
+            .position(|arg| arg == flag)
+            .and_then(|index| args.get(index + 1))
+            .cloned()
+            .unwrap_or_else(|| default.to_string())
+    };
+    Ok((
+        label("--passed-label", "qa:passed"),
+        label("--failed-label", "qa:failed"),
+    ))
+}
+
+/// The number of the pull request at `url`, such as `12` in `https://github.com/o/r/pull/12/files`.
+fn pull_request_number(url: &str) -> &str {
+    url.split("/pull/")
+        .nth(1)
+        .and_then(|rest| rest.split(['/', '#', '?']).next())
+        .unwrap_or("pr")
+}
+
+/// Deletes the record of Launch `id`, which leaves the Watcher and `status`.
+pub fn forget(id: &str) -> Result<()> {
+    let directory = launches_dir()?;
+    for extension in ["json", "prompt"] {
+        match std::fs::remove_file(directory.join(format!("{id}.{extension}"))) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// How the worktree's branch is checked out.

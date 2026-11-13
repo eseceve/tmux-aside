@@ -127,30 +127,26 @@ fn line(rows: &[Row]) -> &str {
 }
 
 #[test]
-fn a_merged_pull_request_with_a_clean_worktree_removes_it_and_closes_its_window() {
+fn a_merged_pull_request_with_a_clean_worktree_removes_it_closes_its_window_and_enters_qa() {
     let setup = Setup::new();
     setup.respond(node(json!({"state": "MERGED", "headRefOid": setup.head()})));
 
     let plugin = setup.start();
 
-    let rows = plugin.rows_where("the cleanup", |rows| {
-        line(rows) == "Merged · worktree removed"
-    });
+    let rows = plugin.rows_where("the cleanup", |rows| line(rows) == "QA · waiting for QA");
     assert!(!setup.worktree.exists());
     assert!(!setup.window_open());
-    assert_eq!(rows[0].bar_tone, Tone::Success);
+    assert_eq!(rows[0].bar_tone, Tone::Accent);
 }
 
 #[test]
-fn a_closed_pull_request_is_cleaned_up_the_same_way() {
+fn a_closed_pull_request_is_cleaned_up_the_same_way_and_leaves() {
     let setup = Setup::new();
     setup.respond(node(json!({"state": "CLOSED", "headRefOid": setup.head()})));
 
     let plugin = setup.start();
 
-    plugin.rows_where("the cleanup", |rows| {
-        line(rows) == "Closed · worktree removed"
-    });
+    plugin.rows_where("the row to leave", |rows| rows.is_empty());
     assert!(!setup.worktree.exists());
     assert!(!setup.window_open());
 }
@@ -164,7 +160,7 @@ fn uncommitted_changes_keep_the_worktree_and_warn() {
     let plugin = setup.start();
 
     let rows = plugin.rows_where("the warning", |rows| {
-        line(rows) == "Merged · uncommitted changes kept in the worktree"
+        line(rows) == "QA · uncommitted changes kept in the worktree"
     });
     assert_eq!(rows[0].bar_tone, Tone::Warning);
     assert!(setup.worktree.exists());
@@ -182,7 +178,7 @@ fn unpushed_commits_keep_the_worktree_and_warn() {
     let plugin = setup.start();
 
     let rows = plugin.rows_where("the warning", |rows| {
-        line(rows) == "Merged · unpushed commits kept in the worktree"
+        line(rows) == "QA · unpushed commits kept in the worktree"
     });
     assert_eq!(rows[0].bar_tone, Tone::Warning);
     assert!(setup.worktree.exists());

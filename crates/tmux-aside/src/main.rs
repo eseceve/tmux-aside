@@ -83,6 +83,12 @@ enum Command {
         #[arg(long, value_name = "URL")]
         pr: Option<String>,
     },
+    /// Launch one QA agent, with a fresh context and the qa template, for these pull requests
+    Qa {
+        /// URLs of the pull requests, each followed by a launch
+        #[arg(required = true)]
+        urls: Vec<String>,
+    },
     /// Record the AI agent in this pane as the agent of a pull request, so it gets its Nudges
     Follow {
         /// URL of the pull request
@@ -200,6 +206,12 @@ fn main() -> Result<()> {
                 },
                 language,
             )?;
+            println!("{}", launch::announce(&launch, language));
+            Ok(())
+        }
+        Command::Qa { urls } => {
+            let language = Language::detect();
+            let launch = launch::qa(&urls, language)?;
             println!("{}", launch::announce(&launch, language));
             Ok(())
         }

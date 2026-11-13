@@ -10,9 +10,9 @@ use tmux_aside::protocol::Tone;
 use tmux_aside_agents::{AgentState, Status};
 use tmux_aside_github::{PullRequest, parse_pull_request};
 use tmux_aside_watcher::{
-    Answer, Followed, LivePane, Stage, Target, Worktree, batch_query, choose_pull_request,
-    evaluate, github_repository, is_idle, parse_batch, pending_nudge, ready_to_merge, rows,
-    should_clean_up,
+    Answer, Answers, Followed, LivePane, Stage, Target, Worktree, ask_in_order, batch_query,
+    choose_pull_request, deployed, evaluate, github_repository, is_idle, leaves, parse_batch,
+    pending_nudge, qa, ready_to_deploy, ready_to_merge, rows, should_clean_up,
 };
 
 fn pull_request(changes: Value) -> PullRequest {
@@ -32,8 +32,8 @@ fn launch(branch: &str, task: &str) -> Launch {
 fn following(launch: Launch, pull_request: Option<PullRequest>) -> Followed {
     let answers = pull_request
         .iter()
-        .filter(|pr| !pr.finished())
-        .map(|pr| (Stage::ReadyToMerge, Ok(ready_to_merge(pr, Language::En))))
+        .filter(|pr| !pr.closed)
+        .flat_map(default_answers)
         .collect();
     Followed {
         launch,
@@ -41,6 +41,27 @@ fn following(launch: Launch, pull_request: Option<PullRequest>) -> Followed {
         worktree: None,
         answers,
     }
+}
+
+/// What the default Criteria answer for `pull_request`, up to the first stage not reached.
+fn default_answers(pull_request: &PullRequest) -> Answers {
+    let language = Language::En;
+    let stages = [
+        Stage::ReadyToMerge,
+        Stage::Qa,
+        Stage::ReadyToDeploy,
+        Stage::Deployed,
+    ];
+    ask_in_order(&stages, pull_request, |stage| {
+        Ok(match stage {
+            Stage::ReadyToMerge => ready_to_merge(pull_request, language),
+            Stage::Qa => qa(pull_request, language),
+            Stage::ReadyToDeploy => {
+                ready_to_deploy(pull_request, "qa:passed", "qa:failed", language)
+            }
+            _ => deployed(language),
+        })
+    })
 }
 
 fn followed(pull_request: Option<PullRequest>) -> Followed {
@@ -238,7 +259,7 @@ fn a_row_shows_the_stage_and_links_the_pull_request_and_the_agents_window() {
         Some(pull_request(json!({}))),
     )];
 
-    let rows = rows(&followed, Language::En);
+    let rows = rows(&followed, "tmux-aside", Language::En);
 
     let row = &rows[0];
     assert_eq!(row.text, "Add a dark theme");
@@ -271,7 +292,7 @@ fn a_launch_without_a_pull_request_shows_its_task_reference() {
         None,
     )];
 
-    let rows = rows(&followed, Language::En);
+    let rows = rows(&followed, "tmux-aside", Language::En);
 
     assert_eq!(rows[0].text, "https://example.com/issues/7");
     assert_eq!(rows[0].detail, None);
@@ -283,7 +304,7 @@ fn a_launch_without_a_pull_request_shows_its_task_reference() {
 fn stages_and_summaries_are_translated() {
     let followed = [following(launch("feat/new", "x"), None)];
 
-    let rows = rows(&followed, Language::Es);
+    let rows = rows(&followed, "tmux-aside", Language::Es);
 
     assert_eq!(rows[0].lines, ["Implementando · aún sin pull request"]);
 }
@@ -443,12 +464,100 @@ fn nothing_is_cleaned_up_while_the_pull_request_is_open() {
 }
 
 #[test]
-fn a_merged_pull_request_says_its_worktree_was_removed() {
+fn a_merged_pull_request_enters_qa() {
     let evaluation = evaluate(&finished("MERGED", Some(Worktree::Missing)), Language::En);
 
-    assert_eq!(evaluation.stage, Stage::Merged);
-    assert_eq!(evaluation.summary, "worktree removed");
-    assert_eq!(evaluation.tone, Tone::Success);
+    assert_eq!(evaluation.stage, Stage::Qa);
+    assert_eq!(evaluation.summary, "waiting for QA");
+    assert_eq!(evaluation.tone, Tone::Accent);
+}
+
+fn merged_with(labels: &[&str], worktree: Worktree) -> Followed {
+    let nodes: Vec<Value> = labels.iter().map(|name| json!({"name": name})).collect();
+    let pr = pull_request(json!({"state": "MERGED", "labels": {"nodes": nodes}}));
+    Followed {
+        worktree: Some(worktree),
+        ..followed(Some(pr))
+    }
+}
+
+#[test]
+fn the_passed_label_makes_it_deployed_by_default_so_it_leaves_once_cleaned_up() {
+    let removed = merged_with(&["qa:passed"], Worktree::Missing);
+    let kept = merged_with(&["qa:passed"], Worktree::Uncommitted);
+
+    assert_eq!(evaluate(&removed, Language::En).stage, Stage::Deployed);
+    assert!(leaves(&removed, Language::En));
+    assert!(!leaves(&kept, Language::En));
+}
+
+#[test]
+fn the_failed_label_keeps_it_in_qa_with_a_failure() {
+    let evaluation = evaluate(
+        &merged_with(&["qa:failed"], Worktree::Missing),
+        Language::En,
+    );
+
+    assert_eq!(evaluation.stage, Stage::Qa);
+    assert_eq!(evaluation.summary, "QA failed");
+    assert_eq!(evaluation.tone, Tone::Danger);
+}
+
+#[test]
+fn the_qa_label_names_are_criterion_arguments() {
+    let pr = pull_request(json!({"state": "MERGED", "labels": {"nodes": [{"name": "qa:ok"}]}}));
+
+    assert!(ready_to_deploy(&pr, "qa:ok", "qa:ko", Language::En).met);
+    assert!(!ready_to_deploy(&pr, "qa:passed", "qa:failed", Language::En).met);
+}
+
+#[test]
+fn a_replaced_deployed_criterion_keeps_it_ready_to_deploy_until_in_production() {
+    let mut followed = merged_with(&["qa:passed"], Worktree::Missing);
+    followed.answers.pop();
+    followed.answers.push((
+        Stage::Deployed,
+        Ok(Answer {
+            met: false,
+            summary: Some("waiting for the release".to_string()),
+            deployed: Some(false),
+            ..Answer::default()
+        }),
+    ));
+
+    let evaluation = evaluate(&followed, Language::En);
+
+    assert_eq!(evaluation.stage, Stage::ReadyToDeploy);
+    assert_eq!(evaluation.summary, "waiting for the release");
+    assert!(!leaves(&followed, Language::En));
+}
+
+#[test]
+fn a_closed_pull_request_leaves_once_its_worktree_is_removed() {
+    assert!(leaves(
+        &finished("CLOSED", Some(Worktree::Missing)),
+        Language::En
+    ));
+    assert!(!leaves(
+        &finished("CLOSED", Some(Worktree::Unpushed)),
+        Language::En
+    ));
+}
+
+#[test]
+fn a_row_in_qa_launches_a_qa_agent_with_its_key() {
+    let followed = [finished("MERGED", Some(Worktree::Missing))];
+
+    let rows = rows(&followed, "/bin/tmux-aside", Language::En);
+
+    assert_eq!(
+        rows[0].action("q").unwrap(),
+        [
+            "/bin/tmux-aside",
+            "qa",
+            "https://github.com/org/shop/pull/12"
+        ]
+    );
 }
 
 #[test]
@@ -489,10 +598,7 @@ fn the_clones_own_working_tree_is_never_cleaned_up() {
     let followed = finished("MERGED", Some(Worktree::Main));
 
     assert!(!should_clean_up(&followed));
-    assert_eq!(
-        evaluate(&followed, Language::En).summary,
-        "the clone's own working tree is kept"
-    );
+    assert_eq!(evaluate(&followed, Language::En).stage, Stage::Qa);
 }
 
 fn answered(answers: Vec<(Stage, Result<Answer, String>)>) -> Followed {
@@ -565,4 +671,32 @@ fn an_answer_ignores_unknown_fields_and_needs_only_met() {
     let answer: Answer = serde_json::from_str(r#"{"met": false, "since": "v2"}"#).unwrap();
 
     assert_eq!(answer, Answer::default());
+}
+
+#[test]
+fn a_merged_pull_request_is_ready_to_merge_whatever_its_criterion_answers() {
+    let merged = pull_request(json!({"state": "MERGED"}));
+    let unmet = Answer::default();
+
+    let answers = ask_in_order(
+        &[Stage::ReadyToMerge, Stage::Qa],
+        &merged,
+        |stage| match stage {
+            Stage::ReadyToMerge => Ok(unmet.clone()),
+            _ => Ok(qa(&merged, Language::En)),
+        },
+    );
+
+    assert_eq!(answers.len(), 2);
+}
+
+#[test]
+fn a_failed_qa_stays_red_even_when_the_worktree_is_kept() {
+    let evaluation = evaluate(
+        &merged_with(&["qa:failed"], Worktree::Uncommitted),
+        Language::En,
+    );
+
+    assert_eq!(evaluation.summary, "QA failed");
+    assert_eq!(evaluation.tone, Tone::Danger);
 }
