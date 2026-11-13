@@ -89,9 +89,11 @@ impl Tmux {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
+    /// Opens a pane running `sleep`, once `sleep` runs: hooks record the pane's command, and an
+    /// agent whose recorded command is still the shell starting it would never be listed.
     pub fn split(&self) -> String {
         let repo = self.dir.join("repo/src");
-        self.tmux(&[
+        let pane = self.tmux(&[
             "split-window",
             "-d",
             "-P",
@@ -102,7 +104,20 @@ impl Tmux {
             "-c",
             repo.to_str().unwrap(),
             "sleep 1000",
-        ])
+        ]);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while self.tmux(&[
+            "display-message",
+            "-p",
+            "-t",
+            &pane,
+            "#{pane_current_command}",
+        ]) != "sleep"
+        {
+            assert!(Instant::now() < deadline, "the pane did not start sleep");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        pane
     }
 
     /// Puts a fake `gh` first on the plugin's PATH that prints `pr_list_json`.
