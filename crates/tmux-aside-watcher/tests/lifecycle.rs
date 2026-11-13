@@ -897,3 +897,13 @@ fn a_failing_criterion_in_qa_offers_no_fix() {
     assert_eq!(rows[0].bar_tone, Tone::Danger);
     assert!(rows[0].action("f").is_none());
 }
+
+#[test]
+fn codex_and_antigravity_agents_are_nudged_like_claude_code_when_done() {
+    for command in ["codex", "agy"] {
+        let mut state = agent(Some(Status::Done));
+        state.command = command.to_string();
+
+        assert!(is_idle(&state, &pane(40, command, false)), "{command}");
+    }
+}

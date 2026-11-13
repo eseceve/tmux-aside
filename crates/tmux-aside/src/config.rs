@@ -70,6 +70,9 @@ pub struct Config {
     pub criteria: Criteria,
     /// The Watcher launches a Group's QA by itself once all its pull requests reached QA.
     pub auto_qa: bool,
+    /// The AI launched agents start (`claude`, `codex` or `agy`), unless their Template names
+    /// one; Claude Code when unset.
+    pub ai: Option<String>,
 }
 
 /// The Criterion of each stage of the Lifecycle that replaces the default one, if any.
@@ -125,6 +128,7 @@ struct RawConfig {
     criteria: Criteria,
     #[serde(default)]
     auto_qa: bool,
+    ai: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -199,7 +203,7 @@ pub fn load(path: &Path) -> Result<Option<Config>> {
 pub fn parse(yaml: &str) -> Result<Config> {
     let raw: Option<RawConfig> =
         serde_saphyr::from_str(yaml).map_err(|error| anyhow!("{error}"))?;
-    let (raw_sections, raw_theme, auto_reload, enter, language, criteria, auto_qa) = raw
+    let (raw_sections, raw_theme, auto_reload, enter, language, criteria, auto_qa, ai) = raw
         .map(|raw| {
             (
                 raw.sections,
@@ -209,6 +213,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
                 raw.language,
                 raw.criteria,
                 raw.auto_qa,
+                raw.ai,
             )
         })
         .unwrap_or_default();
@@ -250,6 +255,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
         language,
         criteria,
         auto_qa,
+        ai,
     })
 }
 

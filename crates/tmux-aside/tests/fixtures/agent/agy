@@ -1,0 +1,4 @@
+#!/bin/sh
+[ "$1" = --prompt-interactive ] || exit 1
+printf %s "$2" > "$PWD/.agent-prompt"
+exec sleep 60

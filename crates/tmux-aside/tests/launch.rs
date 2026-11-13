@@ -875,3 +875,94 @@ fn a_second_fix_gets_a_branch_of_its_own() {
     assert!(branches.contains(&"fix/qa-7".to_string()), "{branches:?}");
     assert!(branches.contains(&"fix/qa-7-2".to_string()), "{branches:?}");
 }
+
+fn own_template(server: &TmuxServer, name: &str, text: &str) {
+    let templates = server.home.path("config/tmux-aside/templates");
+    std::fs::create_dir_all(&templates).unwrap();
+    std::fs::write(templates.join(format!("{name}.md")), text).unwrap();
+}
+
+fn launched_ai(server: &TmuxServer, repo: &Repo, template: &str, branch: &str) -> Value {
+    launch_ok(
+        server,
+        repo,
+        &["--template", template, "--task", "x", "--branch", branch],
+    );
+    let prompt = repo
+        .worktree(&branch.replace('/', "-"))
+        .join(".agent-prompt");
+    wait_for("the agent to start", || prompt.exists());
+    status_json(server)
+        .into_iter()
+        .find(|launch| launch["branch"] == branch)
+        .unwrap()["ai"]
+        .clone()
+}
+
+#[test]
+fn a_template_chooses_the_ai_over_the_config() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    server.home.write_config("ai: agy\n");
+    own_template(&server, "codex-work", "---\nai: codex\n---\nDo ${task}.\n");
+
+    assert_eq!(
+        launched_ai(&server, &repo, "codex-work", "feat/codex"),
+        "codex"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.worktree("feat-codex").join(".agent-prompt")).unwrap(),
+        "Do x.\n"
+    );
+    assert_eq!(launched_ai(&server, &repo, "implement", "feat/agy"), "agy");
+}
+
+#[test]
+fn antigravity_gets_the_prompt_as_an_interactive_one() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    own_template(&server, "agy-work", "---\nai: agy\n---\nDo ${task}.\n");
+
+    launched_ai(&server, &repo, "agy-work", "feat/agy");
+
+    let prompt = std::fs::read_to_string(repo.worktree("feat-agy").join(".agent-prompt")).unwrap();
+    assert_eq!(prompt, "Do x.\n");
+}
+
+#[test]
+fn an_unsupported_ai_fails_with_a_clear_message_and_creates_nothing() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    own_template(&server, "aider-work", "---\nai: aider\n---\nDo ${task}.\n");
+
+    let output = launch(
+        &server,
+        &repo,
+        &[
+            "--template",
+            "aider-work",
+            "--task",
+            "x",
+            "--branch",
+            "feat/aider",
+        ],
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("unsupported AI: aider"), "{stderr}");
+    assert_nothing_created(&server, &repo, "feat/aider");
+}
+
+#[test]
+fn an_unsupported_ai_in_the_config_fails_too() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    server.home.write_config("ai: aider\n");
+
+    let output = launch(&server, &repo, &implement("feat/aider"));
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported AI: aider"));
+    assert_nothing_created(&server, &repo, "feat/aider");
+}

@@ -196,6 +196,7 @@ pub struct Messages {
     pub not_followed: fn(&str) -> String,
     pub no_pull_requests: &'static str,
     pub group: &'static str,
+    pub unsupported_ai: fn(&str) -> String,
     pub worktree_exists: fn(&str) -> String,
     pub agent_not_found: fn(&str) -> String,
     pub launched: fn(&str, &str) -> String,
@@ -257,6 +258,11 @@ const EN: Messages = Messages {
     not_followed: |url| format!("{url} is not followed by any launch"),
     no_pull_requests: "give at least one pull request",
     group: "Group",
+    unsupported_ai: |name| {
+        format!(
+            "unsupported AI: {name}; tmux-aside launches claude, codex and agy, whose status hooks it installs"
+        )
+    },
     worktree_exists: |path| format!("the worktree already exists: {path}"),
     agent_not_found: |program| format!("{program} not found in PATH"),
     launched: |id, window| format!("launched {id} in window {window}"),
@@ -322,6 +328,11 @@ const ES: Messages = Messages {
     not_followed: |url| format!("ningún lanzamiento sigue {url}"),
     no_pull_requests: "indica al menos un pull request",
     group: "Grupo",
+    unsupported_ai: |name| {
+        format!(
+            "IA no soportada: {name}; tmux-aside lanza claude, codex y agy, cuyos hooks de estado instala"
+        )
+    },
     worktree_exists: |path| format!("el worktree ya existe: {path}"),
     agent_not_found: |program| format!("{program} no está en el PATH"),
     launched: |id, window| format!("{id} lanzado en la ventana {window}"),

@@ -28,6 +28,8 @@ const FIX_TEMPLATE: &str = "fix";
 pub struct Template {
     /// Whether the agent opens a pull request, so that the Launch enters the Lifecycle.
     pub opens_pull_request: bool,
+    /// The name of the AI the Template is launched with; the config's when unset.
+    pub ai: Option<String>,
     body: String,
 }
 
@@ -35,6 +37,8 @@ pub struct Template {
 struct FrontMatter {
     #[serde(default)]
     pull_request: bool,
+    #[serde(default)]
+    ai: Option<String>,
 }
 
 impl Template {
@@ -55,6 +59,7 @@ impl Template {
         };
         Ok(Template {
             opens_pull_request: front_matter.pull_request,
+            ai: front_matter.ai,
             body: body.to_string(),
         })
     }
@@ -245,7 +250,7 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
     if worktree.exists() {
         bail!((messages.worktree_exists)(&worktree.display().to_string()));
     }
-    let ai = Ai::Claude;
+    let ai = choose_ai(&template, language)?;
     let program = find_on_path(ai.program())
         .ok_or_else(|| anyhow!((messages.agent_not_found)(ai.program())))?;
     let session = current_session()?;
@@ -295,7 +300,7 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
     std::fs::create_dir_all(&directory)?;
     let prompt = directory.join(format!("{id}.prompt"));
     std::fs::write(&prompt, template.prompt(&task))?;
-    let (window, pane) = open_agent_window(&session, &handle, &worktree, &program, &prompt)?;
+    let (window, pane) = open_agent_window(&session, &handle, &worktree, ai, &program, &prompt)?;
 
     let launch = Launch {
         id,
@@ -329,17 +334,21 @@ fn current_session() -> Result<String> {
 }
 
 /// Opens a background window named `name` in `directory`, creating `session` if missing, and
-/// starts `program` there with the prompt in `prompt`. Returns the window's and pane's ids.
+/// starts `ai`, found at `program`, there with the prompt in `prompt`. Returns the window's
+/// and pane's ids.
 fn open_agent_window(
     session: &str,
     name: &str,
     directory: &Path,
+    ai: Ai,
     program: &Path,
     prompt: &Path,
 ) -> Result<(String, String)> {
     let command = [
         std::env::current_exe()?.as_path(),
         Path::new("_agent"),
+        Path::new("--ai"),
+        Path::new(ai.program()),
         Path::new("--program"),
         program,
         prompt,
@@ -399,7 +408,7 @@ pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
         numbers.push(pull_request_number(url).to_string());
     }
     let repository = repository.ok_or_else(|| anyhow!(messages.no_pull_requests))?;
-    let ai = Ai::Claude;
+    let ai = choose_ai(&template, language)?;
     let program = find_on_path(ai.program())
         .ok_or_else(|| anyhow!((messages.agent_not_found)(ai.program())))?;
     let session = current_session()?;
@@ -421,7 +430,7 @@ pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
             .replace("${passed_label}", &passed)
             .replace("${failed_label}", &failed),
     )?;
-    let (window, pane) = open_agent_window(&session, &handle, &repository, &program, &prompt)?;
+    let (window, pane) = open_agent_window(&session, &handle, &repository, ai, &program, &prompt)?;
     let launch = Launch {
         id,
         branch: git(&repository, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default(),
@@ -743,12 +752,26 @@ pub fn describe(launches: &[Launch], language: Language) -> String {
 }
 
 /// Runs the agent with the prompt in `prompt_file`, then leaves a shell in the window.
-pub fn start_agent(program: &Path, prompt_file: &Path) -> Result<()> {
+pub fn start_agent(ai: Ai, program: &Path, prompt_file: &Path) -> Result<()> {
     let prompt = std::fs::read_to_string(prompt_file)
         .with_context(|| format!("failed to read {}", prompt_file.display()))?;
-    let _ = Command::new(program).arg(prompt).status();
+    let _ = Command::new(program)
+        .args(ai.start_arguments(&prompt))
+        .status();
     let shell = std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
     Err(Command::new(shell).arg("-l").exec().into())
+}
+
+/// The AI a Launch of `template` starts: the Template's, then the config's, then Claude Code.
+/// An AI without tmux-aside status hooks is refused.
+fn choose_ai(template: &Template, language: Language) -> Result<Ai> {
+    let configured = config::load(&config::default_path()?)?.and_then(|config| config.ai);
+    match template.ai.clone().or(configured) {
+        None => Ok(Ai::Claude),
+        Some(name) => {
+            Ai::from_name(&name).ok_or_else(|| anyhow!((language.messages().unsupported_ai)(&name)))
+        }
+    }
 }
 
 fn find_template(name: &str) -> Result<Option<Template>> {

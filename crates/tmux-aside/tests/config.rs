@@ -60,6 +60,7 @@ fn an_empty_file_has_no_sections() {
             language: None,
             criteria: Criteria::default(),
             auto_qa: false,
+            ai: None,
         }
     );
 }

@@ -72,8 +72,8 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 | `tmux-aside focus` | Move the focus to the sidebar of the current window. Does nothing while the sidebar is off. |
 | `tmux-aside reload` | Reread the config and restart the plugins. Sections whose config did not change keep their content. |
 | `tmux-aside setup` | Bind keys in your tmux config (`~/.tmux.conf`, or the XDG one when that is the one you have; `--config` to choose) and install AI hooks, asking for each. |
-| `tmux-aside launch REPO --template NAME --task TEXT --branch BRANCH [--base REF] [--group NAME]` | Start Claude Code on a task in its own branch, worktree and background window. See [Launching agents](#launching-agents). |
-| `tmux-aside launch REPO --template NAME --pr URL [--task TEXT]` | Start Claude Code on an existing pull request, in a worktree of its branch. |
+| `tmux-aside launch REPO --template NAME --task TEXT --branch BRANCH [--base REF] [--group NAME]` | Start an AI agent on a task in its own branch, worktree and background window. See [Launching agents](#launching-agents). |
+| `tmux-aside launch REPO --template NAME --pr URL [--task TEXT]` | Start an AI agent on an existing pull request, in a worktree of its branch. |
 | `tmux-aside qa URL...` | Launch one QA agent, with a fresh context and the `qa` template, for pull requests that launches follow. |
 | `tmux-aside fix URL` | Launch an agent that fixes what QA found in a pull request, on a new branch in its repository and Group. |
 | `tmux-aside follow URL` | Run from an agent's pane: make that agent the one the [watcher](#watcher) follows and nudges for the pull request. |
@@ -81,16 +81,19 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 
 ## Launching agents
 
-`tmux-aside launch ~/src/app --template implement --task "https://github.com/org/app/issues/7" --branch feat/dark-theme` creates the branch from `--base` (the remote's default branch, `origin/HEAD`, unless given) in a worktree next to the clone (`~/src/app__worktrees/feat-dark-theme`), opens a window in the background in your current tmux session (or in a `tmux-aside` session outside tmux) and starts Claude Code there with the template's prompt. When the agent exits, the window keeps a shell.
+`tmux-aside launch ~/src/app --template implement --task "https://github.com/org/app/issues/7" --branch feat/dark-theme` creates the branch from `--base` (the remote's default branch, `origin/HEAD`, unless given) in a worktree next to the clone (`~/src/app__worktrees/feat-dark-theme`), opens a window in the background in your current tmux session (or in a `tmux-aside` session outside tmux) and starts the agent there with the template's prompt. When the agent exits, the window keeps a shell.
 
-A template is a Markdown file whose `${task}` is replaced by the task reference, which can be any text: a URL, an issue, a sentence. Its front matter says whether the agent opens a pull request:
+A template is a Markdown file whose `${task}` is replaced by the task reference, which can be any text: a URL, an issue, a sentence. Its front matter says whether the agent opens a pull request, and may choose the AI:
 
 ```markdown
 ---
 pull_request: true
+ai: codex          # claude, codex or agy (Antigravity); the config's `ai`, or claude, when unset
 ---
 Implement ${task} and open a pull request.
 ```
+
+Agents are Claude Code by default; set `ai: codex` or `ai: agy` at the top of the config to change it, and a template's `ai` wins over it. Only AIs with tmux-aside status hooks are supported, because the watcher nudges an agent only when its hooks say it is done.
 
 tmux-aside ships an `implement` template, an `adopt` one for `--pr`, a `qa` one for `tmux-aside qa` and a `fix` one for `tmux-aside fix`. Your own go in `$XDG_CONFIG_HOME/tmux-aside/templates/NAME.md` (`~/.config/tmux-aside/templates/` by default) and replace a bundled one with the same name.
 
@@ -128,6 +131,7 @@ theme:                 # colors: names (green, darkgray) or #rrggbb
   current: "#78a9ff"   # text of the rows that belong to the window you are in
 auto_reload: false     # reload when this file changes, without tmux-aside reload
 auto_qa: false         # the watcher launches a Group's QA by itself once it is ready
+ai: claude             # the AI launched agents start (claude, codex or agy), unless their template names one
 enter: focus           # focus: Enter jumps to the row; select: Enter shows the row's window and keeps the focus in the sidebar
 language: es           # en or es; your locale's ($LC_ALL, $LC_MESSAGES, $LANG) when unset, else English
 sections:

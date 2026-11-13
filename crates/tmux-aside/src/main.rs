@@ -110,6 +110,8 @@ enum Command {
     },
     #[command(name = "_agent", hide = true)]
     Agent {
+        #[arg(long, value_enum)]
+        ai: AiArg,
         #[arg(long)]
         program: PathBuf,
         prompt: PathBuf,
@@ -149,6 +151,16 @@ enum AiArg {
     Agy,
 }
 
+impl From<AiArg> for Ai {
+    fn from(ai: AiArg) -> Self {
+        match ai {
+            AiArg::Claude => Ai::Claude,
+            AiArg::Codex => Ai::Codex,
+            AiArg::Agy => Ai::Agy,
+        }
+    }
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::On { width } => sidebar::on(width),
@@ -179,15 +191,7 @@ fn main() -> Result<()> {
             ais: if no_hooks {
                 Some(vec![])
             } else {
-                hooks.map(|ais| {
-                    ais.into_iter()
-                        .map(|ai| match ai {
-                            AiArg::Claude => Ai::Claude,
-                            AiArg::Codex => Ai::Codex,
-                            AiArg::Agy => Ai::Agy,
-                        })
-                        .collect()
-                })
+                hooks.map(|ais| ais.into_iter().map(Ai::from).collect())
             },
             defaults: yes,
         }),
@@ -246,7 +250,11 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Command::Agent { program, prompt } => launch::start_agent(&program, &prompt),
+        Command::Agent {
+            ai,
+            program,
+            prompt,
+        } => launch::start_agent(ai.into(), &program, &prompt),
         Command::Sync { window } => sidebar::sync_window(&window),
         Command::Reap => sidebar::reap(),
         Command::Select { window, fallback } => sidebar::select(&window, &fallback),

@@ -87,7 +87,21 @@ impl Ai {
         }
     }
 
-    /// The command that starts the AI, given its initial prompt as the only argument.
+    /// The AI whose command is `name`, if tmux-aside supports it.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|ai| ai.program() == name)
+    }
+
+    /// The arguments that start the AI's interactive session with `prompt` as its first
+    /// message.
+    pub fn start_arguments(self, prompt: &str) -> Vec<String> {
+        match self {
+            Ai::Claude | Ai::Codex => vec![prompt.to_string()],
+            Ai::Agy => vec!["--prompt-interactive".to_string(), prompt.to_string()],
+        }
+    }
+
+    /// The command that starts the AI.
     pub fn program(self) -> &'static str {
         match self {
             Ai::Claude => "claude",
