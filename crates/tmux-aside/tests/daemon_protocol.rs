@@ -149,3 +149,51 @@ fn an_invalid_config_is_shown_instead_of_crashing() {
         "{view:?}"
     );
 }
+
+/// Copies the built `tmux-aside` to `path` as a new file, as an install does.
+fn install_copy(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
+    std::fs::copy(env!("CARGO_BIN_EXE_tmux-aside"), path).unwrap();
+}
+
+#[test]
+fn a_reload_after_the_executable_was_replaced_stops_the_daemon_so_a_new_one_starts() {
+    let home = common::daemon::Home::new("daemon");
+    let executable = home.path("tmux-aside");
+    install_copy(&executable);
+    let socket = home.path("aside.sock");
+    let mut child = std::process::Command::new(&executable)
+        .args(["_daemon", "--socket"])
+        .arg(&socket)
+        .env_remove("TMUX")
+        .env("TMUX_ASIDE_LANG", "en")
+        .envs(home.envs())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_for("the socket", || socket.exists());
+    let mut client = common::daemon::Client::connect(&socket);
+    client.next_view();
+
+    install_copy(&executable);
+    client.send(r#"{"type":"reload"}"#);
+
+    wait_for("the daemon to stop", || {
+        matches!(child.try_wait(), Ok(Some(_)))
+    });
+    assert!(!socket.exists());
+}
+
+#[test]
+fn a_reload_with_the_same_executable_keeps_the_daemon() {
+    let mut daemon = Daemon::start(10_000);
+    let mut client = daemon.connect();
+    client.next_view();
+
+    client.send(r#"{"type":"reload"}"#);
+    client.next_view();
+
+    assert!(daemon.child.try_wait().unwrap().is_none());
+}

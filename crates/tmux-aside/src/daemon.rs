@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs::{File, TryLockError};
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -43,12 +43,22 @@ fn tmux_socket() -> Result<PathBuf> {
     Ok(PathBuf::from(path))
 }
 
+/// The path this process was started from, even once an install replaced it, which Linux
+/// reports as `PATH (deleted)`.
+fn own_executable() -> Result<PathBuf> {
+    let executable = std::env::current_exe()?;
+    Ok(executable
+        .to_str()
+        .and_then(|path| path.strip_suffix(" (deleted)"))
+        .map_or(executable.clone(), PathBuf::from))
+}
+
 /// Starts the daemon in the background unless one already answers on `socket`.
 pub fn ensure_running(socket: &Path) -> Result<()> {
     if UnixStream::connect(socket).is_ok() {
         return Ok(());
     }
-    let mut command = std::process::Command::new(std::env::current_exe()?);
+    let mut command = std::process::Command::new(own_executable()?);
     command
         .arg("_daemon")
         .stdin(std::process::Stdio::null())
@@ -111,6 +121,8 @@ pub fn run(socket: &Path, idle_timeout: Duration) -> Result<()> {
         .with_context(|| format!("failed to bind {}", socket.display()))?;
     std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
 
+    let executable = std::env::current_exe().ok();
+    let started_from = executable.as_deref().and_then(identity);
     let (events, inbox) = mpsc::channel();
     let loaded = load();
     let mut view = loaded.view;
@@ -203,6 +215,9 @@ pub fn run(socket: &Path, idle_timeout: Duration) -> Result<()> {
             let current = modified(config_path.as_deref());
             reload_now |= current != config_modified;
         }
+        if reload_now && executable.as_deref().and_then(identity) != started_from {
+            break;
+        }
         if reload_now {
             reload_now = false;
             config_modified = modified(config_path.as_deref());
@@ -234,6 +249,12 @@ pub fn run(socket: &Path, idle_timeout: Duration) -> Result<()> {
     }
     let _ = std::fs::remove_file(socket);
     Ok(())
+}
+
+/// What tells one file at `path` from another that replaced it there, as an install does.
+fn identity(path: &Path) -> Option<(u64, SystemTime)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.ino(), metadata.modified().ok()?))
 }
 
 /// Asks the daemon serving `socket` to reread the config. Returns false when none is running.

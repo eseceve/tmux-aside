@@ -70,7 +70,7 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 | `tmux-aside off` | Remove it from every window. |
 | `tmux-aside toggle` | On if off, off if on. |
 | `tmux-aside focus` | Move the focus to the sidebar of the current window. Does nothing while the sidebar is off. |
-| `tmux-aside reload` | Reread the config and restart the plugins. Sections whose config did not change keep their content. |
+| `tmux-aside reload` | Reread the config and restart the plugins. Sections whose config did not change keep their content. After reinstalling tmux-aside it restarts the sidebar on the new version instead. |
 | `tmux-aside setup` | Bind keys in your tmux config (`~/.tmux.conf`, or the XDG one when that is the one you have; `--config` to choose), install AI hooks, the [skills](#skills) for each chosen AI (`--skills`, `--no-skills`) and optionally a [Pack](#packs) (`--pack PATH_OR_URL`), asking for each. |
 | `tmux-aside uninstall [--delete-pack]` | Undo what setup added: the key bindings block, the AI hooks, the skills and the `pack` key, leaving everything else as it was. It asks before deleting a Pack it cloned (`--delete-pack` deletes it without asking); a Pack given by path is never deleted. |
 | `tmux-aside launch REPO --template NAME --task TEXT --branch BRANCH [--base REF] [--group NAME]` | Start an AI agent on a task in its own branch, worktree and background window. See [Launching agents](#launching-agents). |
