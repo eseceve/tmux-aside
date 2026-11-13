@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use tmux_aside::config::{
-    Config, Criteria, CriterionCommand, EnterAction, Mode, Pin, Theme, parse, parse_duration,
+    Config, Criteria, CriterionCommand, DiscoverySource, EnterAction, Mode, Pin, Theme, parse,
+    parse_duration,
 };
 use tmux_aside::i18n::Language;
 
@@ -62,6 +63,7 @@ fn an_empty_file_has_no_sections() {
             auto_qa: false,
             ai: None,
             pack: None,
+            discover: vec![],
         }
     );
 }
@@ -252,4 +254,25 @@ fn a_section_can_be_hidden() {
 
     assert!(config.sections[0].hidden);
     assert!(!config.sections[1].hidden);
+}
+
+#[test]
+fn parses_where_the_watcher_discovers_pull_requests() {
+    let config = parse(
+        "discover:\n  - search: \"is:pr is:open author:@me\"\n  - command: /opt/pending\n    args: [\"--pull-requests\"]\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.discover,
+        [
+            DiscoverySource::Search {
+                search: "is:pr is:open author:@me".to_string()
+            },
+            DiscoverySource::Command {
+                command: "/opt/pending".to_string(),
+                args: vec!["--pull-requests".to_string()]
+            },
+        ]
+    );
 }

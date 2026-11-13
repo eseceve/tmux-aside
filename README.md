@@ -222,6 +222,17 @@ Follows the pull request of every [launch](#launching-agents) whose template ope
 - **QA**: once merged, the change waits to be verified in a pre-production environment. The pull requests of a Group are verified together, once every one reached QA; until then their rows say which ones QA waits for (`QA · waiting for #13`). Press `q` on a row of a ready Group, or run `tmux-aside qa URL...`, to launch one QA agent for all of them with the `qa` template; it records its verdict as the `qa:passed` or `qa:failed` label with a comment of the cases it tested. `qa:failed` turns the row red; press `f` on it, or run `tmux-aside fix URL`, to launch an agent with the `fix` template on a new branch (`fix/qa-12`), in the same Group, pointed at the QA report. QA then reruns for the pull request and its fix together, once the fix reaches QA.
 - **Ready to deploy → Deployed**: with the `qa:passed` label the change is ready to go to production, and by default it counts as deployed right away, so its row leaves. A Deployed Criterion of your own, one that knows your deploy pipeline, keeps the row at Ready to deploy until the change is in production.
 
+It can also follow pull requests nobody launched: list where to find them under `discover:` at the top of the config, either a GitHub search (up to 50 results) or a command that prints pull request URLs, one per line:
+
+```yaml
+discover:
+  - search: "is:pr is:open author:@me archived:false (repo:org/app OR repo:org/api)"
+  - command: /path/to/list-pending-pull-requests
+    args: ["--some", "flag"]
+```
+
+Each one found that no launch follows yet is followed from then on, with no agent and no worktree of its own; `tmux-aside status` lists it. When an agent works on its branch, in a clone of its repository, the watcher links that agent to it so it gets the Nudges, and never removes that worktree. List only pull requests in flight: one that leaves after being deployed or closed is not followed again only because the source stops listing it.
+
 A closed pull request leaves too. To have the watcher nudge agents, clean up and run QA without its section taking room in the sidebar, add `hidden: true` to it: it keeps running, and `tmux-aside status` still lists every launch. Set `auto_qa: true` at the top of the config to have the watcher launch a Group's QA by itself once the Group is ready, once per set of pull requests; `q` and `tmux-aside qa` can repeat it either way. Runs with `mode: stream`:
 
 ```yaml

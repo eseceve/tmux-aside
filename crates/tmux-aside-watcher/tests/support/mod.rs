@@ -29,12 +29,13 @@ impl Scratch {
         let gh = dir.join("bin/gh");
         std::fs::write(
             &gh,
-            "#!/bin/sh\ndir=$(dirname \"$0\")/..\nprintf '%s\\n' \"$*\" >> \"$dir/calls\"\ncat \"$dir/response\"\n",
+            "#!/bin/sh\ndir=$(dirname \"$0\")/..\nprintf '%s\\n' \"$*\" >> \"$dir/calls\"\ncase \"$*\" in\n  *q=*) cat \"$dir/search\" ;;\n  *) cat \"$dir/response\" ;;\nesac\n",
         )
         .unwrap();
         Command::new("chmod").arg("+x").arg(&gh).status().unwrap();
         let scratch = Scratch(dir);
         scratch.respond(json!({"data": {}}));
+        scratch.respond_search(&[]);
         scratch
     }
 
@@ -43,6 +44,15 @@ impl Scratch {
         let dir = self.0.join("config/tmux-aside");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("config.yaml"), yaml).unwrap();
+    }
+
+    /// Makes the fake `gh` answer GitHub searches with these pull requests.
+    pub fn respond_search(&self, pull_requests: &[Value]) {
+        std::fs::write(
+            self.0.join("search"),
+            json!({"data": {"search": {"nodes": pull_requests}}}).to_string(),
+        )
+        .unwrap();
     }
 
     pub fn respond(&self, response: Value) {
@@ -329,6 +339,7 @@ impl Tmux {
     /// Writes the agent state file of `pane` in `scratch`, as the agents' hooks would.
     pub fn report(&self, scratch: &Scratch, pane: &str, status: &str) {
         let pid = self.run(&["display-message", "-p", "-t", pane, "#{pane_pid}"]);
+        let workdir = self.run(&["display-message", "-p", "-t", pane, "#{pane_current_path}"]);
         let dir = scratch.0.join("state/tmux-aside/agents");
         std::fs::create_dir_all(&dir).unwrap();
         let state = json!({
@@ -339,7 +350,8 @@ impl Tmux {
             "window": "agent",
             "status": status,
             "status_ts": 0,
-            "activity_ts": 0
+            "activity_ts": 0,
+            "workdir": workdir
         });
         std::fs::write(
             dir.join(format!("{}.json", pane.trim_start_matches('%'))),

@@ -657,7 +657,9 @@ pub fn update(id: &str, change: impl FnOnce(&mut Launch)) -> Result<()> {
 
 /// Records `launch`, replacing its previous record.
 pub fn save(launch: &Launch) -> Result<()> {
-    write(&launches_dir()?.join(format!("{}.json", launch.id)), launch)
+    let directory = launches_dir()?;
+    std::fs::create_dir_all(&directory)?;
+    write(&directory.join(format!("{}.json", launch.id)), launch)
 }
 
 fn write(record: &Path, launch: &Launch) -> Result<()> {

@@ -5,6 +5,7 @@ use tmux_aside::i18n::Language;
 use tmux_aside::launch::Launch;
 pub use tmux_aside::launch::github_repository;
 use tmux_aside::protocol::{Action, Link, Row, Tone};
+use tmux_aside::setup::Ai;
 use tmux_aside_agents::{AgentState, Status};
 use tmux_aside_github::{PULL_REQUEST_FIELDS, PullRequest, State, parse_pull_request};
 
@@ -755,6 +756,45 @@ impl Target {
             ..Target::new(&owner, &name, "")
         })
     }
+}
+
+/// The Launch the Watcher records for a pull request it discovered: it follows it with no agent
+/// and no worktree of its own until an agent on its branch is found.
+pub fn discovered(url: &str) -> Option<Launch> {
+    let target = Target::pull_request(url)?;
+    Some(Launch {
+        id: format!("{}__pr-{}", target.name, target.number?),
+        repository: Default::default(),
+        branch: String::new(),
+        worktree: Default::default(),
+        session: String::new(),
+        window: String::new(),
+        pane: String::new(),
+        ai: Ai::Claude,
+        template: None,
+        task: url.to_string(),
+        opens_pull_request: true,
+        pull_request: Some(url.to_string()),
+        nudges: Vec::new(),
+        group: None,
+        auto_qa: None,
+        keeps_worktree: true,
+    })
+}
+
+/// Whether a Launch already follows the pull request at `url`: it recorded it, or it works on
+/// its `branch` in a clone of its `repository` (by name) and has not recorded it yet.
+pub fn already_followed(launches: &[Launch], url: &str, repository: &str, branch: &str) -> bool {
+    launches.iter().any(|launch| {
+        launch.pull_request.as_deref() == Some(url)
+            || (launch.pull_request.is_none()
+                && !branch.is_empty()
+                && launch.branch == branch
+                && launch
+                    .repository
+                    .file_name()
+                    .is_some_and(|name| name == repository))
+    })
 }
 
 /// A variable of [`batch_query`]: its name, its value and whether GraphQL takes it as an

@@ -48,7 +48,7 @@ _Avoid_: Trigger, prompt, ping
 A private bundle of Criteria and Templates for one organization, installed on top of tmux-aside.
 
 **Launch**:
-An agent started by tmux-aside in its own worktree and window from a Template, or an agent already working on a pull request that registered itself with `follow`; it enters the Lifecycle only if it carries a pull request, opened by its Template or adopted with `launch --pr`.
+An agent started by tmux-aside in its own worktree and window from a Template, or an agent already working on a pull request that registered itself with `follow`; it enters the Lifecycle only if it carries a pull request, opened by its Template, adopted with `launch --pr`, or discovered by the Watcher from the sources the config lists.
 _Avoid_: Job, run, session
 
 **Template**:

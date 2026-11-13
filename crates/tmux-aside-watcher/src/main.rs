@@ -1,26 +1,26 @@
 use std::collections::HashMap;
 use std::io::{BufRead, Read};
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use tmux_aside::config::{self, Criteria, CriterionCommand};
+use tmux_aside::config::{self, Criteria, CriterionCommand, DiscoverySource};
 use tmux_aside::i18n::Language;
 use tmux_aside::launch::{self, Launch};
 use tmux_aside::pack;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
 use tmux_aside::tmux;
 use tmux_aside_agents::{AgentState, agents_dir, state_file};
-use tmux_aside_github::PullRequest;
+use tmux_aside_github::{PullRequest, parse_search, search_query};
 use tmux_aside_watcher::{
-    Answer, Answers, Followed, LivePane, Question, Stage, Target, Worktree, activity, ask_in_order,
-    batch_query, choose_pull_request, deployed, due_for_qa, github_repository, is_idle, leaves,
-    messages, parse_batch, pending_nudge, qa, ready_to_deploy, ready_to_merge, rows,
-    should_clean_up,
+    Answer, Answers, Followed, LivePane, Question, Stage, Target, Worktree, activity,
+    already_followed, ask_in_order, batch_query, choose_pull_request, deployed, discovered,
+    due_for_qa, github_repository, is_idle, leaves, messages, parse_batch, pending_nudge, qa,
+    ready_to_deploy, ready_to_merge, rows, should_clean_up,
 };
 
 const TICK: Duration = Duration::from_secs(1);
@@ -259,7 +259,11 @@ struct Refresh {
 fn refresh(launches: &[Launch], language: Language) -> Result<Refresh> {
     let pull_requests = fetch(launches, language)?;
     record_pull_requests(launches, &pull_requests)?;
+    link_agents(launches, &pull_requests);
     let config = config::load(&config::default_path()?);
+    if let Ok(Some(config)) = &config {
+        discover(&config.discover, launches);
+    }
     let auto_qa = matches!(&config, Ok(Some(config)) if config.auto_qa);
     let configured = config.map(|config| {
         config
@@ -499,14 +503,176 @@ fn record_pull_requests(
 ) -> Result<()> {
     for launch in launches {
         if let Some(pr) = pull_requests.get(&launch.id)
-            && launch.pull_request.as_deref() != Some(pr.url.as_str())
+            && (launch.pull_request.as_deref() != Some(pr.url.as_str()) || launch.branch.is_empty())
         {
             launch::update(&launch.id, |launch| {
                 launch.pull_request = Some(pr.url.clone());
+                if launch.branch.is_empty() {
+                    launch.branch = pr.branch.clone();
+                }
             })?;
         }
     }
     Ok(())
+}
+
+/// Records every pull request the `sources` find that no Launch follows yet, so that the Watcher
+/// follows it from the next fetch. A source that fails is reported and skipped.
+fn discover(sources: &[DiscoverySource], launches: &[Launch]) {
+    for source in sources {
+        let found = match source {
+            DiscoverySource::Search { search } => search_pull_requests(search),
+            DiscoverySource::Command { command, args } => listed_pull_requests(command, args),
+        };
+        let found = match found {
+            Ok(found) => found,
+            Err(error) => {
+                eprintln!("discover: {error:#}");
+                continue;
+            }
+        };
+        for (url, repository, branch) in found {
+            if already_followed(launches, &url, &repository, &branch) {
+                continue;
+            }
+            let Some(launch) = discovered(&url) else {
+                continue;
+            };
+            if launches.iter().any(|known| known.id == launch.id) {
+                continue;
+            }
+            if let Err(error) = launch::save(&launch) {
+                eprintln!("discover: {error:#}");
+            }
+        }
+    }
+}
+
+/// The URL, repository name and branch of the pull requests a GitHub `search` finds.
+fn search_pull_requests(search: &str) -> Result<Vec<(String, String, String)>> {
+    let output = Command::new("gh")
+        .args(["api", "graphql", "-f"])
+        .arg(format!("query={}", search_query()))
+        .arg("-f")
+        .arg(format!("q={search}"))
+        .args(["-F", "limit=50"])
+        .output()
+        .context("failed to run gh")?;
+    if !output.status.success() {
+        bail!("gh: {}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    Ok(parse_search(&String::from_utf8_lossy(&output.stdout))?
+        .into_iter()
+        .map(|pr| (pr.url, pr.repository, pr.branch))
+        .collect())
+}
+
+/// The pull request URLs `command` prints, one per line.
+fn listed_pull_requests(command: &str, args: &[String]) -> Result<Vec<(String, String, String)>> {
+    let output = Command::new(command)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| format!("failed to run {command}"))?;
+    if !output.status.success() {
+        bail!(
+            "{command}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.contains("/pull/"))
+        .map(|url| (url.to_string(), String::new(), String::new()))
+        .collect())
+}
+
+/// Gives each Launch the Watcher follows without a live agent (a discovered pull request, or a
+/// followed one whose agent is gone) the agent that works on its pull request's branch, in a
+/// clone of its repository, when there is one no other Launch has.
+fn link_agents(launches: &[Launch], pull_requests: &HashMap<String, PullRequest>) {
+    let Ok(dir) = agents_dir() else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let agents: Vec<AgentState> = entries
+        .flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+        .filter_map(|json| serde_json::from_str(&json).ok())
+        .collect();
+    let mut taken: Vec<String> = launches
+        .iter()
+        .filter(|launch| !launch.pane.is_empty())
+        .map(|launch| launch.pane.clone())
+        .collect();
+    for launch in launches.iter().filter(|launch| launch.keeps_worktree) {
+        if !launch.pane.is_empty() && live_agent(&launch.pane).is_some() {
+            continue;
+        }
+        let (Some(pr), Some(target)) = (
+            pull_requests.get(&launch.id),
+            launch
+                .pull_request
+                .as_deref()
+                .and_then(Target::pull_request),
+        ) else {
+            continue;
+        };
+        let found = agents.iter().find(|agent| {
+            !taken.contains(&agent.pane_id)
+                && live_agent(&agent.pane_id).is_some()
+                && works_on(
+                    Path::new(&agent.workdir),
+                    &target.owner,
+                    &target.name,
+                    &pr.branch,
+                )
+        });
+        let Some(agent) = found else {
+            continue;
+        };
+        let workdir = Path::new(&agent.workdir);
+        let worktree = git_output(workdir, &["rev-parse", "--show-toplevel"]).map(PathBuf::from);
+        let repository = git_output(
+            workdir,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )
+        .and_then(|common| Some(Path::new(&common).parent()?.to_path_buf()));
+        let window = tmux::run(&[
+            "display-message",
+            "-p",
+            "-t",
+            &agent.pane_id,
+            "#{window_id}",
+        ])
+        .unwrap_or_default();
+        taken.push(agent.pane_id.clone());
+        let result = launch::update(&launch.id, |launch| {
+            launch.pane = agent.pane_id.clone();
+            launch.window = window;
+            if let Some(worktree) = worktree {
+                launch.worktree = worktree;
+            }
+            if let Some(repository) = repository {
+                launch.repository = repository;
+            }
+        });
+        if let Err(error) = result {
+            eprintln!("{error:#}");
+        }
+    }
+}
+
+/// Whether `workdir` is a clone of `owner/name` on `branch`.
+fn works_on(workdir: &Path, owner: &str, name: &str, branch: &str) -> bool {
+    !branch.is_empty()
+        && git_output(workdir, &["rev-parse", "--abbrev-ref", "HEAD"]).as_deref() == Some(branch)
+        && git_output(workdir, &["config", "--get", "remote.origin.url"])
+            .and_then(|origin| github_repository(&origin))
+            == Some((owner.to_string(), name.to_string()))
 }
 
 /// Types the pending Nudge of `followed` into its agent's pane if the agent is idle, and

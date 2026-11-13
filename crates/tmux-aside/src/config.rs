@@ -78,6 +78,22 @@ pub struct Config {
     pub ai: Option<String>,
     /// The folder of the Pack whose Criteria and Templates replace the defaults.
     pub pack: Option<PathBuf>,
+    /// Where the Watcher finds pull requests to follow without a Launch.
+    pub discover: Vec<DiscoverySource>,
+}
+
+/// A source of pull requests the Watcher follows by itself.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub enum DiscoverySource {
+    /// The pull requests a GitHub search finds, up to 50.
+    Search { search: String },
+    /// The pull request URLs a command prints, one per line.
+    Command {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+    },
 }
 
 /// The Criterion of each stage of the Lifecycle that replaces the default one, if any.
@@ -135,6 +151,8 @@ struct RawConfig {
     auto_qa: bool,
     ai: Option<String>,
     pack: Option<PathBuf>,
+    #[serde(default)]
+    discover: Vec<DiscoverySource>,
 }
 
 #[derive(Deserialize, Default)]
@@ -216,7 +234,18 @@ pub fn load(path: &Path) -> Result<Option<Config>> {
 pub fn parse(yaml: &str) -> Result<Config> {
     let raw: Option<RawConfig> =
         serde_saphyr::from_str(yaml).map_err(|error| anyhow!("{error}"))?;
-    let (raw_sections, raw_theme, auto_reload, enter, language, criteria, auto_qa, ai, pack) = raw
+    let (
+        raw_sections,
+        raw_theme,
+        auto_reload,
+        enter,
+        language,
+        criteria,
+        auto_qa,
+        ai,
+        pack,
+        discover,
+    ) = raw
         .map(|raw| {
             (
                 raw.sections,
@@ -228,6 +257,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
                 raw.auto_qa,
                 raw.ai,
                 raw.pack,
+                raw.discover,
             )
         })
         .unwrap_or_default();
@@ -272,6 +302,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
         auto_qa,
         ai,
         pack,
+        discover,
     })
 }
 

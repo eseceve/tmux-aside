@@ -10,10 +10,10 @@ use tmux_aside::protocol::Tone;
 use tmux_aside_agents::{AgentState, Status};
 use tmux_aside_github::{PullRequest, parse_pull_request};
 use tmux_aside_watcher::{
-    Answer, Answers, Followed, LivePane, Stage, Target, Worktree, activity, ask_in_order,
-    batch_query, choose_pull_request, deployed, due_for_qa, evaluate, github_repository, group_key,
-    group_qa, is_idle, leaves, parse_batch, pending_nudge, qa, ready_to_deploy, ready_to_merge,
-    rows, should_clean_up,
+    Answer, Answers, Followed, LivePane, Stage, Target, Worktree, activity, already_followed,
+    ask_in_order, batch_query, choose_pull_request, deployed, discovered, due_for_qa, evaluate,
+    github_repository, group_key, group_qa, is_idle, leaves, parse_batch, pending_nudge, qa,
+    ready_to_deploy, ready_to_merge, rows, should_clean_up,
 };
 
 fn pull_request(changes: Value) -> PullRequest {
@@ -964,4 +964,53 @@ fn a_launch_without_an_agent_has_no_jump_and_no_window() {
     assert!(rows[0].action("enter").is_none());
     assert_eq!(rows[0].window, None);
     assert!(rows[0].action("p").is_some());
+}
+
+#[test]
+fn a_discovered_pull_request_is_followed_without_an_agent_nor_a_worktree_of_its_own() {
+    let launch = discovered("https://github.com/org/shop/pull/12").unwrap();
+
+    assert_eq!(launch.id, "shop__pr-12");
+    assert_eq!(
+        launch.pull_request.as_deref(),
+        Some("https://github.com/org/shop/pull/12")
+    );
+    assert!(launch.pane.is_empty());
+    assert!(launch.keeps_worktree);
+    assert!(launch.opens_pull_request);
+    assert!(discovered("https://example.com/x").is_none());
+}
+
+#[test]
+fn a_pull_request_is_already_followed_when_recorded_or_worked_on_before_it_is_recorded() {
+    let recorded = Launch {
+        pull_request: Some("https://github.com/org/shop/pull/12".to_string()),
+        ..launch("feat/a", "x")
+    };
+    let working = launch("feat/b", "x");
+
+    assert!(already_followed(
+        &[recorded],
+        "https://github.com/org/shop/pull/12",
+        "",
+        ""
+    ));
+    assert!(already_followed(
+        std::slice::from_ref(&working),
+        "https://github.com/org/shop/pull/13",
+        "shop",
+        "feat/b"
+    ));
+    assert!(!already_followed(
+        std::slice::from_ref(&working),
+        "https://github.com/org/api/pull/13",
+        "api",
+        "feat/b"
+    ));
+    assert!(!already_followed(
+        &[working],
+        "https://github.com/org/shop/pull/14",
+        "shop",
+        "feat/c"
+    ));
 }
