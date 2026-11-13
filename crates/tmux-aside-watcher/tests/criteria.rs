@@ -178,3 +178,53 @@ fn a_packs_criterion_replaces_the_default() {
             .is_some_and(|row| row.lines == ["Implementing · needs the team's review"])
     });
 }
+
+#[test]
+fn a_criterion_is_told_what_the_agent_is_doing() {
+    let scratch = Scratch::new();
+    let tmux = Tmux::start();
+    let pane = tmux.agent_pane(&scratch.0.join("typed"), &scratch.0);
+    tmux.report(&scratch, &pane, "working");
+    let shop = scratch.repository("shop");
+    scratch.save(&Launch {
+        pane: pane.clone(),
+        ..launch(&shop, "feat/x")
+    });
+    scratch.respond(found(&[Some(node(json!({})))]));
+    let question = scratch.0.join("question.json");
+    ready_to_merge(
+        &scratch,
+        "answer",
+        &[question.to_str().unwrap(), r#"{"met": false}"#],
+        "5s",
+    );
+
+    let _plugin = scratch.start_in("200ms", Some(&tmux));
+    support::wait_until("a question", || question.exists());
+    let asked =
+        || -> Value { serde_json::from_str(&std::fs::read_to_string(&question).unwrap()).unwrap() };
+    assert_eq!(asked()["agent"], "busy");
+
+    tmux.report(&scratch, &pane, "done");
+    support::wait_until("the agent to be idle", || asked()["agent"] == "idle");
+}
+
+#[test]
+fn without_a_live_agent_the_question_has_no_agent() {
+    let scratch = Scratch::new();
+    scratch.record(&scratch.repository("shop"), "feat/x", true);
+    scratch.respond(found(&[Some(node(json!({})))]));
+    let question = scratch.0.join("question.json");
+    ready_to_merge(
+        &scratch,
+        "answer",
+        &[question.to_str().unwrap(), r#"{"met": false}"#],
+        "5s",
+    );
+
+    let _plugin = scratch.start("30s");
+    support::wait_until("a question", || question.exists());
+
+    let asked: Value = serde_json::from_str(&std::fs::read_to_string(&question).unwrap()).unwrap();
+    assert!(asked.get("agent").is_none(), "{asked}");
+}

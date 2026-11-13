@@ -17,7 +17,7 @@ use tmux_aside::tmux;
 use tmux_aside_agents::{AgentState, agents_dir, state_file};
 use tmux_aside_github::PullRequest;
 use tmux_aside_watcher::{
-    Answer, Answers, Followed, LivePane, Question, Stage, Target, Worktree, ask_in_order,
+    Answer, Answers, Followed, LivePane, Question, Stage, Target, Worktree, activity, ask_in_order,
     batch_query, choose_pull_request, deployed, due_for_qa, github_repository, is_idle, leaves,
     messages, parse_batch, pending_nudge, qa, ready_to_deploy, ready_to_merge, rows,
     should_clean_up,
@@ -275,8 +275,15 @@ fn refresh(launches: &[Launch], language: Language) -> Result<Refresh> {
             })
             .unwrap_or_default()
     });
+    let agents: HashMap<String, String> = launches
+        .iter()
+        .filter_map(|launch| {
+            let (state, live) = live_agent(&launch.pane)?;
+            Some((launch.id.clone(), activity(&state, &live)?.to_string()))
+        })
+        .collect();
     let answers = match configured.map(criteria) {
-        Ok(criteria) => ask_criteria(&pull_requests, &criteria, language),
+        Ok(criteria) => ask_criteria(&pull_requests, &agents, &criteria, language),
         Err(error) => {
             let error = (messages(language).invalid_config)(&format!("{error:#}"));
             pull_requests
@@ -329,6 +336,7 @@ fn criteria(configured: Criteria) -> Vec<(Stage, Vec<String>, Duration)> {
 /// in order until one is unmet or fails, keyed by Launch id.
 fn ask_criteria(
     pull_requests: &HashMap<String, PullRequest>,
+    agents: &HashMap<String, String>,
     criteria: &[(Stage, Vec<String>, Duration)],
     language: Language,
 ) -> HashMap<String, Answers> {
@@ -348,6 +356,7 @@ fn ask_criteria(
                             stage: stage.key().to_string(),
                             url: pr.url.clone(),
                             pull_request: pr.clone(),
+                            agent: agents.get(id).cloned(),
                         };
                         ask(command, &question, *timeout, language)
                     })
@@ -517,36 +526,33 @@ fn nudge(followed: &mut Followed, language: Language) -> Result<()> {
 }
 
 fn agent_is_idle(pane: &str) -> bool {
-    let Some(state) = agents_dir()
+    live_agent(pane).is_some_and(|(state, live)| is_idle(&state, &live))
+}
+
+/// The agent the hooks registered in `pane` and the pane as it is now, while both exist.
+fn live_agent(pane: &str) -> Option<(AgentState, LivePane)> {
+    let state = agents_dir()
         .ok()
         .and_then(|dir| std::fs::read_to_string(state_file(&dir, pane)).ok())
-        .and_then(|json| serde_json::from_str::<AgentState>(&json).ok())
-    else {
-        return false;
-    };
-    let Ok(live) = tmux::run(&[
+        .and_then(|json| serde_json::from_str::<AgentState>(&json).ok())?;
+    let live = tmux::run(&[
         "display-message",
         "-p",
         "-t",
         pane,
         "#{pane_pid}\t#{pane_current_command}\t#{pane_active}\t#{window_active}\t#{session_attached}",
-    ]) else {
-        return false;
-    };
+    ])
+    .ok()?;
     let fields: Vec<&str> = live.split('\t').collect();
     let [pid, command, pane_active, window_active, attached] = fields[..] else {
-        return false;
+        return None;
     };
-    pid.parse().is_ok_and(|pid| {
-        is_idle(
-            &state,
-            &LivePane {
-                pid,
-                command: command.to_string(),
-                viewed: pane_active == "1" && window_active == "1" && attached != "0",
-            },
-        )
-    })
+    let live = LivePane {
+        pid: pid.parse().ok()?,
+        command: command.to_string(),
+        viewed: pane_active == "1" && window_active == "1" && attached != "0",
+    };
+    Some((state, live))
 }
 
 /// What removing `worktree` would lose. Commits are pushed when the branch is at the pull

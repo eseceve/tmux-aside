@@ -10,10 +10,10 @@ use tmux_aside::protocol::Tone;
 use tmux_aside_agents::{AgentState, Status};
 use tmux_aside_github::{PullRequest, parse_pull_request};
 use tmux_aside_watcher::{
-    Answer, Answers, Followed, LivePane, Stage, Target, Worktree, ask_in_order, batch_query,
-    choose_pull_request, deployed, due_for_qa, evaluate, github_repository, group_key, group_qa,
-    is_idle, leaves, parse_batch, pending_nudge, qa, ready_to_deploy, ready_to_merge, rows,
-    should_clean_up,
+    Answer, Answers, Followed, LivePane, Stage, Target, Worktree, activity, ask_in_order,
+    batch_query, choose_pull_request, deployed, due_for_qa, evaluate, github_repository, group_key,
+    group_qa, is_idle, leaves, parse_batch, pending_nudge, qa, ready_to_deploy, ready_to_merge,
+    rows, should_clean_up,
 };
 
 fn pull_request(changes: Value) -> PullRequest {
@@ -906,4 +906,18 @@ fn codex_and_antigravity_agents_are_nudged_like_claude_code_when_done() {
 
         assert!(is_idle(&state, &pane(40, command, false)), "{command}");
     }
+}
+
+#[test]
+fn a_criterion_learns_whether_the_agent_is_idle_or_busy_or_gone() {
+    let live = pane(40, "claude", true);
+
+    assert_eq!(activity(&agent(Some(Status::Done)), &live), Some("idle"));
+    assert_eq!(activity(&agent(None), &live), Some("idle"));
+    assert_eq!(activity(&agent(Some(Status::Working)), &live), Some("busy"));
+    assert_eq!(activity(&agent(Some(Status::Waiting)), &live), Some("busy"));
+    assert_eq!(
+        activity(&agent(Some(Status::Done)), &pane(40, "zsh", false)),
+        None
+    );
 }

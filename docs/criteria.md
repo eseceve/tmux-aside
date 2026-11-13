@@ -28,10 +28,10 @@ A pull request whose Deployed Criterion is met leaves the watcher, and so does a
 The watcher runs the command with its arguments, writes one JSON object to its stdin and closes it:
 
 ```json
-{"stage": "ready_to_merge", "url": "https://github.com/org/app/pull/12", "pull_request": {"number": 12, "head": "4f2c...", "draft": false, "review": "APPROVED", "checks": "SUCCESS", "conflicting": false, "unresolved_threads": 0, "labels": ["merge:ready"], "...": "..."}}
+{"stage": "ready_to_merge", "url": "https://github.com/org/app/pull/12", "agent": "idle", "pull_request": {"number": 12, "head": "4f2c...", "draft": false, "review": "APPROVED", "checks": "SUCCESS", "conflicting": false, "unresolved_threads": 0, "labels": ["merge:ready"], "...": "..."}}
 ```
 
-`pull_request` holds what the watcher already fetched, so most Criteria need no GitHub call of their own. The Criterion prints one JSON object on stdout and exits with status 0:
+`pull_request` holds what the watcher already fetched, so most Criteria need no GitHub call of their own. `agent` says what the launch's agent is doing: `idle` once its turn is over, `busy` while it works or waits for the user; it is absent when the launch has no live agent. A Criterion that acts for the agent, such as asking reviewers to look again once a round of fixes is done, waits for `idle`. The Criterion prints one JSON object on stdout and exits with status 0:
 
 | Field | Type | |
 |---|---|---|

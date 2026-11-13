@@ -215,6 +215,10 @@ pub struct Question {
     pub url: String,
     /// What the Watcher already fetched about the pull request.
     pub pull_request: PullRequest,
+    /// What the Launch's agent is doing: `idle` (done, its turn over) or `busy` (working or
+    /// waiting for the user); absent when it has no live agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 /// What a Criterion answers on its stdout, as one JSON object. Unknown fields are ignored and
@@ -383,6 +387,18 @@ pub struct LivePane {
     pub command: String,
     /// Shown to someone: the active pane of the active window of an attached session.
     pub viewed: bool,
+}
+
+/// What an agent is doing for a Criterion's [`Question`]: `idle` once its turn is over, `busy`
+/// while it works or waits for the user, and `None` when its pane no longer runs it.
+pub fn activity(state: &AgentState, pane: &LivePane) -> Option<&'static str> {
+    if state.pane_pid != pane.pid || state.command != pane.command {
+        return None;
+    }
+    match state.status {
+        Some(Status::Working | Status::Waiting) => Some("busy"),
+        _ => Some("idle"),
+    }
 }
 
 /// Whether the agent can take a Nudge: it is neither working nor waiting for the user, its
