@@ -41,6 +41,10 @@ struct Cli {
     /// fail, they conflict or changes were requested; repeat for several
     #[arg(long = "blocked-label", value_name = "LABEL")]
     blocked_labels: Vec<String>,
+    /// Add a line with each reviewer and where they stand: ✓ approved, ◆ changes requested,
+    /// ○ commented, ◷ asked to review
+    #[arg(long)]
+    reviewers: bool,
 }
 
 fn main() -> ExitCode {
@@ -78,6 +82,7 @@ fn run(cli: Cli) -> Result<()> {
             diff: cli.diff,
             label_prefixes: cli.label_prefixes,
             blocked_labels: cli.blocked_labels,
+            reviewers: cli.reviewers,
             language,
         },
     );

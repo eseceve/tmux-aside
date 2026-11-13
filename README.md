@@ -210,6 +210,7 @@ Lists the pull requests matching a [GitHub search](https://docs.github.com/en/se
 - `--byline`: author and age.
 - `--diff`: lines the pull request adds and removes (`+120 -8`).
 - `--labels merge:`: labels that start with the prefix (`merge:blocked · merge:depends-on`); repeat for several prefixes.
+- `--reviewers`: everyone who reviewed or was asked to, alphabetical, with where they stand (`◆ bob · ✓ felicandalc · ◷ compara-ai-rollout`): ✓ approved, ◆ changes requested, ○ commented, ◷ asked to review (again, when they reviewed before).
 - `--blocked-label merge:blocked`: pull requests with the label take the warning state (`⊘`), unless their checks fail, they conflict or changes were requested; repeat for several labels.
 - Keys on a row: `enter` opens the pull request, `c` copies its URL.
 

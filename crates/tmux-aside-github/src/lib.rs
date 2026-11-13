@@ -10,7 +10,7 @@ elif command -v wl-copy >/dev/null; then printf %s \"$1\" | wl-copy; \
 else printf %s \"$1\" | xclip -selection clipboard; fi";
 
 /// GraphQL fragment `PullRequestFields` selecting the fields a [`PullRequest`] is read from.
-pub const PULL_REQUEST_FIELDS: &str = "fragment PullRequestFields on PullRequest { number title url headRefOid state isCrossRepository isDraft additions deletions reviewDecision createdAt updatedAt author { login } labels(first: 50) { nodes { name } } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } } }";
+pub const PULL_REQUEST_FIELDS: &str = "fragment PullRequestFields on PullRequest { number title url headRefOid state isCrossRepository isDraft additions deletions reviewDecision createdAt updatedAt author { login } labels(first: 50) { nodes { name } } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } latestReviews(first: 20) { nodes { state author { login } } } reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } ... on Bot { login } } } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } } }";
 
 /// GraphQL query listing pull requests that match a GitHub search (`$q`), with the fields
 /// the rows show.
@@ -100,6 +100,39 @@ pub struct PullRequest {
     pub additions: u64,
     pub deletions: u64,
     pub labels: Vec<String>,
+    /// Everyone who reviewed the pull request or was asked to, with where they stand.
+    #[serde(default)]
+    pub reviewers: Vec<Reviewer>,
+}
+
+/// A person, team or bot who reviewed a pull request or was asked to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reviewer {
+    /// Their login, or the team's slug.
+    pub name: String,
+    pub stance: Stance,
+}
+
+/// Where a reviewer stands on a pull request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stance {
+    Approved,
+    ChangesRequested,
+    Commented,
+    /// Asked to review, again when they reviewed before.
+    Requested,
+}
+
+impl Stance {
+    fn glyph(self) -> &'static str {
+        match self {
+            Stance::Approved => "✓",
+            Stance::ChangesRequested => "◆",
+            Stance::Commented => "○",
+            Stance::Requested => "◷",
+        }
+    }
 }
 
 /// Parses the response of [`search_query`], skipping results that are not pull requests.
@@ -217,6 +250,8 @@ pub struct RowOptions {
     pub label_prefixes: Vec<String>,
     /// Labels that make a pull request [`State::Blocked`].
     pub blocked_labels: Vec<String>,
+    /// Add a line with each reviewer and where they stand.
+    pub reviewers: bool,
     /// Language of the text the rows add.
     pub language: Language,
 }
@@ -240,6 +275,7 @@ pub fn rows(pull_requests: &[PullRequest], options: &RowOptions) -> Vec<Row> {
                 .into_iter()
                 .chain(options.merge_info.then(|| merge_info(pr, options.language)))
                 .chain(labels(pr, &options.label_prefixes))
+                .chain(options.reviewers.then(|| reviewers(pr)).flatten())
                 .collect();
             if options.diff {
                 let diff = format!("+{} -{}", pr.additions, pr.deletions);
@@ -264,6 +300,20 @@ fn byline(pr: &PullRequest, now: Timestamp) -> String {
         }
         Err(_) => format!("@{}", pr.author),
     }
+}
+
+/// `◆ bob · ✓ felicandalc · ◷ compara-ai-rollout`, alphabetical: approved ✓, changes requested ◆,
+/// commented ○, asked to review ◷. `None` when nobody reviewed or was asked to.
+fn reviewers(pr: &PullRequest) -> Option<String> {
+    let mut reviewers: Vec<&Reviewer> = pr.reviewers.iter().collect();
+    reviewers.sort_by(|a, b| a.name.cmp(&b.name));
+    (!reviewers.is_empty()).then(|| {
+        reviewers
+            .iter()
+            .map(|reviewer| format!("{} {}", reviewer.stance.glyph(), reviewer.name))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    })
 }
 
 fn labels(pr: &PullRequest, prefixes: &[String]) -> Option<String> {
@@ -371,6 +421,10 @@ struct Node {
     #[serde(default)]
     latest_opinionated_reviews: Option<Nodes<Review>>,
     #[serde(default)]
+    latest_reviews: Option<Nodes<LatestReview>>,
+    #[serde(default)]
+    review_requests: Option<Nodes<ReviewRequest>>,
+    #[serde(default)]
     base_ref: Option<BaseRef>,
     repository: Repository,
     commits: Commits,
@@ -390,6 +444,24 @@ struct Thread {
 #[derive(Deserialize)]
 struct Review {
     state: String,
+}
+
+#[derive(Deserialize)]
+struct LatestReview {
+    state: String,
+    author: Option<Author>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewRequest {
+    requested_reviewer: Option<RequestedReviewer>,
+}
+
+#[derive(Deserialize)]
+struct RequestedReviewer {
+    login: Option<String>,
+    slug: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -498,6 +570,39 @@ impl Node {
                 .find(|state| reviews.iter().any(|review| review == state))
                 .map(str::to_string)
         });
+        let mut reviewers: Vec<Reviewer> = self
+            .latest_reviews
+            .map_or_else(Vec::new, |reviews| reviews.nodes)
+            .into_iter()
+            .filter_map(|review| {
+                let stance = match review.state.as_str() {
+                    "APPROVED" => Stance::Approved,
+                    "CHANGES_REQUESTED" => Stance::ChangesRequested,
+                    "COMMENTED" => Stance::Commented,
+                    _ => return None,
+                };
+                Some(Reviewer {
+                    name: review.author?.login,
+                    stance,
+                })
+            })
+            .collect();
+        for request in self
+            .review_requests
+            .map_or_else(Vec::new, |requests| requests.nodes)
+        {
+            let Some(name) = request
+                .requested_reviewer
+                .and_then(|reviewer| reviewer.login.or(reviewer.slug))
+            else {
+                continue;
+            };
+            reviewers.retain(|reviewer| reviewer.name != name);
+            reviewers.push(Reviewer {
+                name,
+                stance: Stance::Requested,
+            });
+        }
         PullRequest {
             repository: self.repository.name,
             full_name: self.repository.name_with_owner,
@@ -538,6 +643,7 @@ impl Node {
             labels: self.labels.map_or_else(Vec::new, |labels| {
                 labels.nodes.into_iter().map(|label| label.name).collect()
             }),
+            reviewers,
         }
     }
 }

@@ -505,3 +505,87 @@ fn a_blocked_pull_request_takes_the_warning_tone_in_its_colored_parts() {
         (Tone::Warning, Tone::Warning)
     );
 }
+
+fn with_reviews(reviews: &str, requests: &str) -> tmux_aside_github::PullRequest {
+    let node = node("shop", 7, false, "", "SUCCESS", "2026-10-20T10:00:00Z").replacen(
+        r#""number": 7,"#,
+        &format!(
+            r#""number": 7, "latestReviews": {{"nodes": [{reviews}]}}, "reviewRequests": {{"nodes": [{requests}]}},"#
+        ),
+        1,
+    );
+    parse_search(&search(&node)).unwrap().remove(0)
+}
+
+fn review(login: &str, state: &str) -> String {
+    format!(r#"{{"state": "{state}", "author": {{"login": "{login}", "__typename": "User"}}}}"#)
+}
+
+#[test]
+fn reviewers_add_a_line_with_each_reviewer_and_where_they_stand() {
+    let pr = with_reviews(
+        &[
+            review("felicandalc", "APPROVED"),
+            review("bob", "CHANGES_REQUESTED"),
+            review("carla", "COMMENTED"),
+        ]
+        .join(", "),
+        r#"{"requestedReviewer": {"__typename": "Team", "slug": "compara-ai-rollout"}}"#,
+    );
+
+    let rows = rows(
+        &[pr],
+        &RowOptions {
+            reviewers: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        rows[0].lines,
+        ["◆ bob · ○ carla · ◷ compara-ai-rollout · ✓ felicandalc"]
+    );
+}
+
+#[test]
+fn a_reviewer_asked_again_shows_as_requested() {
+    let pr = with_reviews(
+        &review("ana", "APPROVED"),
+        r#"{"requestedReviewer": {"__typename": "User", "login": "ana"}}"#,
+    );
+
+    let rows = rows(
+        &[pr],
+        &RowOptions {
+            reviewers: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(rows[0].lines, ["◷ ana"]);
+}
+
+#[test]
+fn without_reviewers_no_line_is_added() {
+    let pr = with_reviews("", "");
+
+    let rows = rows(
+        &[pr],
+        &RowOptions {
+            reviewers: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(rows[0].lines.is_empty());
+}
+
+#[test]
+fn reviewers_are_shown_only_when_asked() {
+    let rows = rows(
+        &[with_reviews(&review("ana", "APPROVED"), "")],
+        &RowOptions::default(),
+    );
+
+    assert!(rows[0].lines.is_empty());
+}
