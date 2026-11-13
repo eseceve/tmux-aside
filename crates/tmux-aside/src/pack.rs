@@ -2,9 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, anyhow, bail};
-use serde::Deserialize;
 
-use crate::config::{self, Config, Criteria, CriterionCommand, DeployedAction};
+use crate::config::{self, Config, Criteria, CriterionCommand, DeployedAction, RawConfig};
 
 /// The manifest every Pack holds at its root.
 pub const MANIFEST: &str = "pack.yaml";
@@ -21,23 +20,10 @@ pub struct Pack {
     pub on_deployed: Option<DeployedAction>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Manifest {
-    #[serde(default)]
-    criteria: Criteria,
-    templates: Option<String>,
-    on_deployed: Option<DeployedAction>,
-}
-
 /// Reads the manifest of the Pack in `dir`. Criterion commands and the Templates folder are
 /// relative to `dir`.
 pub fn load(dir: &Path) -> Result<Pack> {
-    let path = dir.join(MANIFEST);
-    let yaml = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
-    let manifest: Manifest = serde_saphyr::from_str(&yaml)
-        .map_err(|error| anyhow!("invalid pack manifest {}: {error}", path.display()))?;
+    let manifest = manifest(dir)?;
     let inside = |criterion: Option<CriterionCommand>| {
         criterion.map(|criterion| CriterionCommand {
             command: criterion
@@ -56,6 +42,41 @@ pub fn load(dir: &Path) -> Result<Pack> {
         templates: dir.join(manifest.templates.as_deref().unwrap_or(DEFAULT_TEMPLATES)),
         on_deployed: manifest.on_deployed,
     })
+}
+
+/// The settings the Pack in `dir` gives a config that leaves them out, such as its sections and
+/// theme, with plugin and discovery commands that are relative paths resolved inside it.
+pub(crate) fn settings(dir: &Path) -> Result<RawConfig> {
+    let mut settings = manifest(dir)?;
+    let inside = |command: &mut String| {
+        if command.contains('/') && Path::new(command.as_str()).is_relative() {
+            *command = dir.join(&*command).to_string_lossy().into_owned();
+        }
+    };
+    for section in settings.sections.iter_mut().flatten() {
+        inside(&mut section.plugin);
+    }
+    for source in settings.discover.iter_mut().flatten() {
+        if let config::DiscoverySource::Command { command, .. } = source {
+            inside(command);
+        }
+    }
+    Ok(settings)
+}
+
+fn manifest(dir: &Path) -> Result<RawConfig> {
+    let path = dir.join(MANIFEST);
+    let yaml = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let manifest = RawConfig::parse(&yaml)
+        .map_err(|error| anyhow!("invalid pack manifest {}: {error:#}", path.display()))?;
+    if manifest.pack.is_some() {
+        bail!(
+            "invalid pack manifest {}: a Pack cannot name another Pack",
+            path.display()
+        );
+    }
+    Ok(manifest)
 }
 
 /// The Pack the config points to, if any, a relative `pack` being relative to the config's

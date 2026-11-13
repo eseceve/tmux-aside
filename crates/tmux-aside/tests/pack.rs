@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use tmux_aside::config::parse;
+use tmux_aside::config::{self, parse};
 use tmux_aside::pack::{self, MANIFEST, is_url, with_pack_key};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -163,6 +163,77 @@ fn the_configs_deployed_action_wins_over_the_packs() {
         ("deployed", true)
     );
     assert_eq!(pack::on_deployed(&parse("").unwrap(), None), None);
+}
+
+/// Loads a config of `yaml` that names a Pack with the manifest `manifest`.
+fn load_with_pack(yaml: &str, manifest: &str) -> config::Config {
+    let dir = Dir::new();
+    write_pack(&dir.path("pack"), manifest);
+    std::fs::create_dir_all(dir.config().parent().unwrap()).unwrap();
+    std::fs::write(
+        dir.config(),
+        format!("pack: \"{}\"\n{yaml}", dir.path("pack").display()),
+    )
+    .unwrap();
+    config::load(&dir.config()).unwrap().unwrap()
+}
+
+#[test]
+fn a_packs_settings_fill_in_what_the_config_leaves_out() {
+    let config = load_with_pack(
+        "theme:\n  accent: \"#111111\"\n",
+        "sections:\n  - plugin: agents\n  - plugin: usage\n    pin: bottom\ntheme:\n  accent: \"#222222\"\n  muted: \"#333333\"\nauto_qa: true\nai: codex\n",
+    );
+
+    let plugins: Vec<&str> = config.sections.iter().map(|s| s.plugin.as_str()).collect();
+    assert_eq!(plugins, ["agents", "usage"]);
+    assert_eq!(config.theme.accent, "#111111");
+    assert_eq!(config.theme.muted, "#333333");
+    assert_eq!(config.theme.success, config::Theme::default().success);
+    assert!(config.auto_qa);
+    assert_eq!(config.ai.as_deref(), Some("codex"));
+}
+
+#[test]
+fn the_configs_sections_replace_the_packs_whole_and_its_false_wins() {
+    let config = load_with_pack(
+        "sections:\n  - plugin: clock\nauto_qa: false\n",
+        "sections:\n  - plugin: agents\n  - plugin: usage\nauto_qa: true\n",
+    );
+
+    let plugins: Vec<&str> = config.sections.iter().map(|s| s.plugin.as_str()).collect();
+    assert_eq!(plugins, ["clock"]);
+    assert!(!config.auto_qa);
+}
+
+#[test]
+fn a_packs_plugin_and_discovery_paths_are_relative_to_the_pack() {
+    let config = load_with_pack(
+        "",
+        "sections:\n  - plugin: bin/status\n  - plugin: agents\ndiscover:\n  - command: bin/list\n",
+    );
+
+    assert!(
+        config.sections[0].plugin.ends_with("/pack/bin/status"),
+        "{}",
+        config.sections[0].plugin
+    );
+    assert_eq!(config.sections[1].plugin, "agents");
+    match &config.discover[0] {
+        config::DiscoverySource::Command { command, .. } => {
+            assert!(command.ends_with("/pack/bin/list"), "{command}")
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_manifest_cannot_name_another_pack_nor_a_config_its_templates() {
+    let dir = Dir::new();
+    write_pack(&dir.0, "pack: /elsewhere\n");
+
+    assert!(pack::load(&dir.0).is_err());
+    assert!(parse("templates: mine\n").is_err());
 }
 
 #[test]

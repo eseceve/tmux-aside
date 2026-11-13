@@ -110,7 +110,7 @@ Add `--group NAME` to put launches that belong together in a Group, such as the 
 
 ### Packs
 
-A Pack bundles a team's Criteria and Templates, so that everyone launches and follows work the same way without tmux-aside knowing anything private. It is a folder (usually a private git repository) with a `pack.yaml`:
+A Pack bundles a team's Criteria, Templates and default sidebar, so that everyone launches and follows work the same way without tmux-aside knowing anything private. It is a folder (usually a private git repository) with a `pack.yaml`:
 
 ```yaml
 criteria:                     # the stages whose Criterion it replaces; see docs/criteria.md
@@ -122,9 +122,14 @@ criteria:                     # the stages whose Criterion it replaces; see docs
 templates: templates          # its Templates folder (the default)
 on_deployed:                  # what the watcher does once pull requests are deployed
   template: deployed
+theme:                        # the team's colors
+  accent: "#8EB0FF"
+sections:                     # the team's default sidebar
+  - plugin: agents
+  - plugin: bin/status        # a relative path runs a plugin inside the Pack
 ```
 
-Install it with `tmux-aside setup --pack PATH_OR_URL`, or answer the setup's question. A path is used in place, so you can develop a Pack without copying it. A git URL is cloned once, with your own git credentials, into `$XDG_DATA_HOME/tmux-aside/packs/` (`~/.local/share/tmux-aside/packs/` by default); running the command again pulls it fast-forward only, and nothing updates it on its own. Either way setup only writes `pack:` in the config. Templates resolve by name from your own folder, then the Pack's, then the bundled ones, Criteria from the config's `criteria:`, then the Pack's, then the defaults, and `on_deployed` from the config's, then the Pack's. tmux-aside reads only the manifest and runs only what it declares; an invalid manifest is reported and the defaults are used.
+Install it with `tmux-aside setup --pack PATH_OR_URL`, or answer the setup's question. A path is used in place, so you can develop a Pack without copying it. A git URL is cloned once, with your own git credentials, into `$XDG_DATA_HOME/tmux-aside/packs/` (`~/.local/share/tmux-aside/packs/` by default); running the command again pulls it fast-forward only, and nothing updates it on its own. Either way setup only writes `pack:` in the config. The manifest takes every key of the [config](#configuration) but `pack`, and the config wins over it: each key comes from the config when it sets it, even to `false`, else from the Pack, else from the default. `sections`, `discover` and `on_deployed` come whole from the first that sets them, so to change the Pack's sidebar you copy its `sections` into your config and edit them there; `theme` and `criteria` merge per color and per stage. Templates resolve by name from your own folder, then the Pack's, then the bundled ones. A relative `command` or `plugin` path in the manifest is relative to the Pack's folder. tmux-aside reads only the manifest and runs only what it declares; an invalid manifest is reported and the defaults are used.
 
 Launches are recorded in `$XDG_STATE_HOME/tmux-aside/launches/`, so `tmux-aside status` still lists them after tmux or the computer restarts. Run `tmux-aside resurrect` then to reopen their agents: each one resumes its latest conversation in its worktree (`claude --continue`, `codex resume --last`, `agy --continue`) in a new window of its session.
 

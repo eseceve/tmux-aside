@@ -5,6 +5,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
 use crate::i18n::Language;
+use crate::pack;
 pub use crate::view::{Density, Pin, Theme};
 
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(30);
@@ -162,31 +163,67 @@ fn duration<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Duratio
     parse_duration(&value).map_err(serde::de::Error::custom)
 }
 
-#[derive(Deserialize)]
+/// A config file or a Pack's manifest as written, before defaults: a key that is absent is
+/// `None`, so that a config's `false` wins over a Pack's `true`.
+#[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-struct RawConfig {
+pub(crate) struct RawConfig {
+    pub(crate) sections: Option<Vec<RawSection>>,
+    pub(crate) theme: Option<RawTheme>,
+    pub(crate) auto_reload: Option<bool>,
+    pub(crate) enter: Option<EnterAction>,
+    pub(crate) language: Option<Language>,
     #[serde(default)]
-    sections: Vec<RawSection>,
-    theme: Option<RawTheme>,
-    #[serde(default)]
-    auto_reload: bool,
-    #[serde(default)]
-    enter: EnterAction,
-    language: Option<Language>,
-    #[serde(default)]
-    criteria: Criteria,
-    #[serde(default)]
-    auto_qa: bool,
-    ai: Option<String>,
-    pack: Option<PathBuf>,
-    #[serde(default)]
-    discover: Vec<DiscoverySource>,
-    on_deployed: Option<DeployedAction>,
+    pub(crate) criteria: Criteria,
+    pub(crate) auto_qa: Option<bool>,
+    pub(crate) ai: Option<String>,
+    pub(crate) pack: Option<PathBuf>,
+    pub(crate) discover: Option<Vec<DiscoverySource>>,
+    pub(crate) on_deployed: Option<DeployedAction>,
+    pub(crate) templates: Option<String>,
+}
+
+impl RawConfig {
+    /// Parses a config file or a Pack's manifest.
+    pub(crate) fn parse(yaml: &str) -> Result<Self> {
+        Ok(serde_saphyr::from_str::<Option<RawConfig>>(yaml)
+            .map_err(|error| anyhow!("{error}"))?
+            .unwrap_or_default())
+    }
+
+    /// This config with what it leaves out taken from `pack`: each key from the first that sets
+    /// it, and each color of the theme on its own. Criteria and the deployed action stay
+    /// apart, because their commands are resolved inside the Pack.
+    fn over(self, pack: RawConfig) -> RawConfig {
+        let theme = match (self.theme, pack.theme) {
+            (Some(own), Some(pack)) => Some(RawTheme {
+                muted: own.muted.or(pack.muted),
+                accent: own.accent.or(pack.accent),
+                success: own.success.or(pack.success),
+                warning: own.warning.or(pack.warning),
+                danger: own.danger.or(pack.danger),
+                selection: own.selection.or(pack.selection),
+                current: own.current.or(pack.current),
+            }),
+            (own, pack) => own.or(pack),
+        };
+        RawConfig {
+            sections: self.sections.or(pack.sections),
+            theme,
+            auto_reload: self.auto_reload.or(pack.auto_reload),
+            enter: self.enter.or(pack.enter),
+            language: self.language.or(pack.language),
+            auto_qa: self.auto_qa.or(pack.auto_qa),
+            ai: self.ai.or(pack.ai),
+            discover: self.discover.or(pack.discover),
+            ..self
+        }
+    }
 }
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-struct RawTheme {
+pub(crate) struct RawTheme {
     muted: Option<String>,
     accent: Option<String>,
     success: Option<String>,
@@ -198,8 +235,8 @@ struct RawTheme {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawSection {
-    plugin: String,
+pub(crate) struct RawSection {
+    pub(crate) plugin: String,
     #[serde(default)]
     args: Vec<String>,
     mode: Option<Mode>,
@@ -248,24 +285,46 @@ pub fn agent_state_file(dir: &Path, pane: &str) -> PathBuf {
     dir.join(format!("{}.json", pane.trim_start_matches('%')))
 }
 
-/// Reads the config at `path`, or `None` when the file does not exist.
+/// Reads the config at `path`, or `None` when the file does not exist, with what it leaves out
+/// taken from its Pack, if any; a relative `pack` is relative to `path`'s folder. A Pack that
+/// cannot be read is reported and left out.
 pub fn load(path: &Path) -> Result<Option<Config>> {
-    match std::fs::read_to_string(path) {
-        Ok(yaml) => parse(&yaml)
-            .with_context(|| format!("invalid config {}", path.display()))
-            .map(Some),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+    let yaml = match std::fs::read_to_string(path) {
+        Ok(yaml) => yaml,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
+    let invalid = || format!("invalid config {}", path.display());
+    let mut raw = own_config(&yaml).with_context(invalid)?;
+    if let Some(dir) = &raw.pack {
+        let dir = path.parent().unwrap_or(Path::new("")).join(dir);
+        match pack::settings(&dir) {
+            Ok(settings) => raw = raw.over(settings),
+            Err(error) => eprintln!("{error:#}"),
+        }
     }
+    build(raw).with_context(invalid).map(Some)
 }
 
 /// Parses a YAML config, applying defaults and naming the section of any invalid value.
 pub fn parse(yaml: &str) -> Result<Config> {
-    let raw: Option<RawConfig> =
-        serde_saphyr::from_str(yaml).map_err(|error| anyhow!("{error}"))?;
-    let (
-        raw_sections,
-        raw_theme,
+    build(own_config(yaml)?)
+}
+
+fn own_config(yaml: &str) -> Result<RawConfig> {
+    let raw = RawConfig::parse(yaml)?;
+    if raw.templates.is_some() {
+        bail!("templates: only a Pack's manifest names its templates folder");
+    }
+    Ok(raw)
+}
+
+fn build(raw: RawConfig) -> Result<Config> {
+    let RawConfig {
+        sections: raw_sections,
+        theme: raw_theme,
         auto_reload,
         enter,
         language,
@@ -275,23 +334,14 @@ pub fn parse(yaml: &str) -> Result<Config> {
         pack,
         discover,
         on_deployed,
-    ) = raw
-        .map(|raw| {
-            (
-                raw.sections,
-                raw.theme.unwrap_or_default(),
-                raw.auto_reload,
-                raw.enter,
-                raw.language,
-                raw.criteria,
-                raw.auto_qa,
-                raw.ai,
-                raw.pack,
-                raw.discover,
-                raw.on_deployed,
-            )
-        })
-        .unwrap_or_default();
+        templates: _,
+    } = raw;
+    let raw_sections = raw_sections.unwrap_or_default();
+    let raw_theme = raw_theme.unwrap_or_default();
+    let auto_reload = auto_reload.unwrap_or(false);
+    let enter = enter.unwrap_or_default();
+    let auto_qa = auto_qa.unwrap_or(false);
+    let discover = discover.unwrap_or_default();
     let theme = parse_theme(raw_theme)?;
     let sections = raw_sections
         .into_iter()
