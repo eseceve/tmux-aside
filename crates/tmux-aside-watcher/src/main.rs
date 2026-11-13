@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, Read};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use tmux_aside::config::{self, Criteria, CriterionCommand, DiscoverySource};
 use tmux_aside::i18n::Language;
-use tmux_aside::launch::{self, Launch};
+use tmux_aside::launch::{self, Launch, Progress};
 use tmux_aside::pack;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
 use tmux_aside::tmux;
@@ -19,8 +19,8 @@ use tmux_aside_github::{PullRequest, parse_search, search_query};
 use tmux_aside_watcher::{
     Answer, Answers, Followed, LivePane, Question, Stage, Target, Worktree, activity,
     already_followed, ask_in_order, batch_query, choose_pull_request, deployed, discovered,
-    due_for_qa, github_repository, is_idle, leaves, messages, parse_batch, pending_nudge, qa,
-    ready_to_deploy, ready_to_merge, rows, should_clean_up,
+    due_for_qa, evaluate, github_repository, is_idle, leaves, messages, parse_batch, pending_nudge,
+    qa, ready_to_deploy, ready_to_merge, rows, should_clean_up,
 };
 
 const TICK: Duration = Duration::from_secs(1);
@@ -131,6 +131,7 @@ fn run(cli: Cli) -> Result<()> {
     let mut refreshing: Option<Receiver<Result<Refresh>>> = None;
     let mut fetched: Option<(Instant, Vec<String>)> = None;
     let mut last = String::new();
+    let mut recorded_progress: BTreeMap<String, Progress> = BTreeMap::new();
     loop {
         let launches: Vec<Launch> = launch::list()?
             .into_iter()
@@ -195,6 +196,24 @@ fn run(cli: Cli) -> Result<()> {
         }
         if *auto_qa {
             launch_due_qa(&mut followed, &tmux_aside, language)?;
+        }
+        let progress: BTreeMap<String, Progress> = followed
+            .iter()
+            .map(|followed| {
+                let evaluation = evaluate(followed, language);
+                let progress = Progress {
+                    stage: evaluation.stage.key().to_string(),
+                    stage_name: evaluation.stage.name(language).to_string(),
+                    summary: evaluation.summary,
+                };
+                (followed.launch.id.clone(), progress)
+            })
+            .collect();
+        if progress != recorded_progress {
+            match launch::record_progress(&progress) {
+                Ok(()) => recorded_progress = progress,
+                Err(error) => eprintln!("{error:#}"),
+            }
         }
         let snapshot = serde_json::to_string(&PluginMessage::Snapshot {
             title: Some(title.clone()),

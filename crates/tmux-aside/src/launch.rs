@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -702,6 +703,58 @@ pub fn announce(launch: &Launch, language: Language) -> String {
     (language.messages().launched)(&launch.id, &format!("{}:{}", launch.session, launch.window))
 }
 
+/// Where the Watcher last saw a Launch's pull request, as it records it for `status`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Progress {
+    /// The stage, as Criteria name it: `implementing`, `ready_to_merge`, `qa`...
+    pub stage: String,
+    /// The stage's name in the sidebar's language.
+    pub stage_name: String,
+    /// What is missing to reach the next stage, or where the pull request stands.
+    pub summary: String,
+}
+
+/// Records where the Watcher sees each Launch's pull request, replacing what it recorded
+/// before, keyed by Launch id.
+pub fn record_progress(progress: &BTreeMap<String, Progress>) -> Result<()> {
+    let path = progress_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let partial = path.with_extension("json.tmp");
+    std::fs::write(&partial, serde_json::to_string_pretty(progress)?)
+        .and_then(|()| std::fs::rename(&partial, &path))
+        .with_context(|| format!("failed to write {}", path.display()))
+}
+
+/// What the Watcher last recorded with [`record_progress`]; empty when it recorded nothing.
+pub fn progress() -> BTreeMap<String, Progress> {
+    progress_path()
+        .ok()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+fn progress_path() -> Result<PathBuf> {
+    Ok(config::state_dir()?.join("stages.json"))
+}
+
+/// `launches` as JSON for `status --json`, each with the `stage` and `summary` the Watcher last
+/// recorded for it, when it did.
+pub fn as_json(launches: &[Launch], progress: &BTreeMap<String, Progress>) -> Result<String> {
+    let mut values = Vec::new();
+    for launch in launches {
+        let mut value = serde_json::to_value(launch)?;
+        if let (Some(object), Some(progress)) = (value.as_object_mut(), progress.get(&launch.id)) {
+            object.insert("stage".to_string(), progress.stage.clone().into());
+            object.insert("summary".to_string(), progress.summary.clone().into());
+        }
+        values.push(value);
+    }
+    Ok(serde_json::to_string_pretty(&values)?)
+}
+
 /// Every recorded Launch, ordered by id. A record that cannot be read is skipped, with a
 /// warning on stderr, so that it hides no other Launch.
 pub fn list() -> Result<Vec<Launch>> {
@@ -733,8 +786,13 @@ pub fn list() -> Result<Vec<Launch>> {
     Ok(launches)
 }
 
-/// `launches` as plain text, one block per Launch.
-pub fn describe(launches: &[Launch], language: Language) -> String {
+/// `launches` as plain text, one block per Launch, with the stage the Watcher last recorded for
+/// it in `progress`.
+pub fn describe(
+    launches: &[Launch],
+    progress: &BTreeMap<String, Progress>,
+    language: Language,
+) -> String {
     let messages = language.messages();
     if launches.is_empty() {
         return format!("{}\n", messages.no_launches);
@@ -777,6 +835,13 @@ pub fn describe(launches: &[Launch], language: Language) -> String {
                 (
                     messages.group,
                     launch.group.clone().unwrap_or_else(|| "-".to_string()),
+                ),
+                (
+                    messages.stage,
+                    progress.get(&launch.id).map_or_else(
+                        || "-".to_string(),
+                        |progress| format!("{} · {}", progress.stage_name, progress.summary),
+                    ),
                 ),
             ];
             let width = fields

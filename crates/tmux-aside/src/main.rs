@@ -282,10 +282,14 @@ fn main() -> Result<()> {
         }
         Command::Status { json } => {
             let launches = launch::list()?;
+            let progress = launch::progress();
             if json {
-                println!("{}", serde_json::to_string_pretty(&launches)?);
+                println!("{}", launch::as_json(&launches, &progress)?);
             } else {
-                print!("{}", launch::describe(&launches, Language::detect()));
+                print!(
+                    "{}",
+                    launch::describe(&launches, &progress, Language::detect())
+                );
             }
             Ok(())
         }

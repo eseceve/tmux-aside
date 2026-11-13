@@ -93,3 +93,19 @@ fn a_replaced_deployed_criterion_keeps_it_ready_to_deploy_until_in_production() 
         line(rows) == "Ready to deploy · waiting for the release"
     });
 }
+
+#[test]
+fn the_watcher_records_each_pull_requests_stage_for_status() {
+    let scratch = setup(&["qa:failed"]);
+    let plugin = scratch.start("30s");
+    plugin.rows_where("the failure", |rows| line(rows) == "QA · QA failed");
+
+    let stages = scratch.0.join("state/tmux-aside/stages.json");
+    support::wait_until("the stages", || stages.exists());
+    let recorded: Value = serde_json::from_str(&std::fs::read_to_string(stages).unwrap()).unwrap();
+
+    assert_eq!(
+        recorded["shop__feat-x"],
+        json!({"stage": "qa", "stage_name": "QA", "summary": "QA failed"})
+    );
+}

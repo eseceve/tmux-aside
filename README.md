@@ -78,7 +78,7 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 | `tmux-aside qa URL...` | Launch one QA agent, with a fresh context and the `qa` template, for pull requests that launches follow. |
 | `tmux-aside fix URL` | Launch an agent that fixes what QA found in a pull request, on a new branch in its repository and Group. |
 | `tmux-aside follow URL` | Run from an agent's pane: make that agent the one the [watcher](#watcher) follows and nudges for the pull request. |
-| `tmux-aside status [--json]` | List every launch with its repository, branch, worktree, window, agent, template, task and pull request. |
+| `tmux-aside status [--json]` | List every launch with its repository, branch, worktree, window, agent, template, task, pull request and the stage the watcher last saw it in, with what it is missing (`QA · waiting for QA`). |
 
 ## Launching agents
 

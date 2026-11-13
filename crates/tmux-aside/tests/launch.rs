@@ -1129,3 +1129,36 @@ fn qa_of_a_discovered_pull_request_opens_in_the_current_directory() {
         "{qa}"
     );
 }
+
+#[test]
+fn status_shows_the_stage_the_watcher_recorded() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    launch_ok(&server, &repo, &implement("feat/staged"));
+    std::fs::write(
+        server.home.path("state/tmux-aside/stages.json"),
+        serde_json::json!({"clone__feat-staged": {
+            "stage": "qa", "stage_name": "QA", "summary": "waiting for QA"
+        }})
+        .to_string(),
+    )
+    .unwrap();
+
+    let text = String::from_utf8(server.aside(&["status"]).stdout).unwrap();
+    let launch = &status_json(&server)[0];
+
+    assert!(text.contains("QA · waiting for QA"), "{text}");
+    assert_eq!(launch["stage"], "qa");
+    assert_eq!(launch["summary"], "waiting for QA");
+}
+
+#[test]
+fn status_without_a_recorded_stage_shows_a_dash() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    launch_ok(&server, &repo, &implement("feat/unstaged"));
+
+    let launch = &status_json(&server)[0];
+
+    assert!(launch.get("stage").is_none());
+}

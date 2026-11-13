@@ -183,7 +183,8 @@ impl Stage {
         }
     }
 
-    fn name(self, language: Language) -> &'static str {
+    /// The stage's name in `language`, as rows show it.
+    pub fn name(self, language: Language) -> &'static str {
         let messages = messages(language);
         match self {
             Stage::Implementing => messages.implementing,

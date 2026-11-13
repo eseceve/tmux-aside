@@ -196,6 +196,7 @@ pub struct Messages {
     pub not_followed: fn(&str) -> String,
     pub no_pull_requests: &'static str,
     pub group: &'static str,
+    pub stage: &'static str,
     pub unsupported_ai: fn(&str) -> String,
     pub invalid_pack: fn(&str) -> String,
     pub worktree_exists: fn(&str) -> String,
@@ -259,6 +260,7 @@ const EN: Messages = Messages {
     not_followed: |url| format!("{url} is not followed by any launch"),
     no_pull_requests: "give at least one pull request",
     group: "Group",
+    stage: "Stage",
     invalid_pack: |error| format!("{error}; using the default criteria and templates"),
     unsupported_ai: |name| {
         format!(
@@ -330,6 +332,7 @@ const ES: Messages = Messages {
     not_followed: |url| format!("ningún lanzamiento sigue {url}"),
     no_pull_requests: "indica al menos un pull request",
     group: "Grupo",
+    stage: "Etapa",
     invalid_pack: |error| format!("{error}; se usan los criterios y plantillas por defecto"),
     unsupported_ai: |name| {
         format!(
