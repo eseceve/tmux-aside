@@ -64,8 +64,9 @@ enum Command {
         /// Install no skills
         #[arg(long)]
         no_skills: bool,
-        /// Use the Pack at this path, or clone it from this git URL (pulled again on each run)
-        #[arg(long, value_name = "PATH_OR_URL")]
+        /// Use the Pack at this path, unzip it from this .zip (replacing the one unzipped before),
+        /// or clone it from this git URL (pulled again on each run)
+        #[arg(long, value_name = "PATH_ZIP_OR_URL")]
         pack: Option<String>,
         /// Take the default of everything not given, without asking
         #[arg(long)]
@@ -76,10 +77,10 @@ enum Command {
         /// tmux config setup wrote to [default: the one tmux reads, or ~/.tmux.conf]
         #[arg(long)]
         config: Option<PathBuf>,
-        /// Also delete a Pack tmux-aside cloned, without asking
+        /// Also delete a Pack tmux-aside cloned or unzipped, without asking
         #[arg(long)]
         delete_pack: bool,
-        /// Take the default of everything not given, without asking (keeps a cloned Pack)
+        /// Take the default of everything not given, without asking (keeps a cloned or unzipped Pack)
         #[arg(long)]
         yes: bool,
     },

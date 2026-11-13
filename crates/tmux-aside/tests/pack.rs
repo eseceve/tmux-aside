@@ -269,6 +269,90 @@ fn setup_with_a_pack_path_writes_the_key_without_copying_anything() {
     assert!(!dir.path("data").exists());
 }
 
+/// Zips `folder` (as `contents`, relative to `folder`) into `zip`, replacing it.
+fn zip(folder: &Path, contents: &str, zip: &Path) {
+    let _ = std::fs::remove_file(zip);
+    let output = Command::new("zip")
+        .current_dir(folder)
+        .args(["-q", "-r"])
+        .arg(zip)
+        .arg(contents)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn setup_with_a_pack_zip_unzips_it_into_the_packs_folder() {
+    let dir = Dir::new();
+    write_pack(&dir.path("src/team-pack"), "templates: templates\n");
+    zip(&dir.path("src"), "team-pack", &dir.path("team-pack.zip"));
+
+    let output = dir.setup(dir.path("team-pack.zip").to_str().unwrap());
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let unzipped = dir.path("data/tmux-aside/packs/team-pack");
+    assert!(unzipped.join("templates/review.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.config()).unwrap(),
+        format!("pack: \"{}\"\n", unzipped.display())
+    );
+}
+
+#[test]
+fn a_new_zip_replaces_the_unzipped_pack_whole() {
+    let dir = Dir::new();
+    let source = dir.path("src");
+    write_pack(&source, "templates: templates\n");
+    std::fs::write(source.join("templates/old.md"), "Old ${task}.\n").unwrap();
+    zip(&source, ".", &dir.path("team-pack.zip"));
+    assert!(
+        dir.setup(dir.path("team-pack.zip").to_str().unwrap())
+            .status
+            .success()
+    );
+
+    std::fs::remove_file(source.join("templates/old.md")).unwrap();
+    std::fs::write(source.join("templates/review.md"), "Review again.\n").unwrap();
+    zip(&source, ".", &dir.path("team-pack.zip"));
+    let output = dir.setup(dir.path("team-pack.zip").to_str().unwrap());
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let unzipped = dir.path("data/tmux-aside/packs/team-pack");
+    assert!(!unzipped.join("templates/old.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(unzipped.join("templates/review.md")).unwrap(),
+        "Review again.\n"
+    );
+}
+
+#[test]
+fn a_zip_without_a_manifest_changes_nothing() {
+    let dir = Dir::new();
+    std::fs::create_dir_all(dir.path("src")).unwrap();
+    std::fs::write(dir.path("src/notes.md"), "no pack here\n").unwrap();
+    zip(&dir.path("src"), ".", &dir.path("team-pack.zip"));
+
+    let output = dir.setup(dir.path("team-pack.zip").to_str().unwrap());
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("pack.yaml"));
+    assert!(!dir.path("data/tmux-aside/packs/team-pack").exists());
+    assert!(!dir.config().exists());
+}
+
 #[test]
 fn setup_with_a_pack_url_clones_it_once_and_pulls_it_fast_forward_after() {
     let dir = Dir::new();

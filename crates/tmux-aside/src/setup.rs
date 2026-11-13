@@ -398,7 +398,7 @@ pub fn run(options: Options) -> Result<()> {
     let pack = match options.pack {
         Some(pack) => Some(pack),
         None if interactive => Some(
-            Text::new("Pack (path or git URL, empty for none):")
+            Text::new("Pack (path, .zip or git URL, empty for none):")
                 .with_help_message("a private bundle of Criteria and Templates for your team")
                 .prompt()
                 .context("setup canceled; nothing was changed")?,
@@ -634,14 +634,14 @@ fn default_tmux_config() -> Result<PathBuf> {
 pub struct UninstallOptions {
     /// The tmux config setup wrote to; the one tmux reads when unset.
     pub config: Option<PathBuf>,
-    /// Delete a Pack tmux-aside cloned; asked in a terminal when unset, kept otherwise.
+    /// Delete a Pack tmux-aside cloned or unzipped; asked in a terminal when unset, kept otherwise.
     pub delete_pack: Option<bool>,
     pub defaults: bool,
 }
 
 /// Undoes what `run` added: the marked block of the tmux config (and its keys, inside tmux),
 /// the AI hooks, the skills and the `pack` key, leaving everything else as it is. A Pack
-/// cloned by setup is deleted only when the user agrees; one given by path never is. Without
+/// cloned or unzipped by setup is deleted only when the user agrees; one given by path never is. Without
 /// a previous setup it changes nothing.
 pub fn uninstall(options: UninstallOptions) -> Result<()> {
     let interactive = !options.defaults && std::io::stdin().is_terminal();
@@ -664,7 +664,7 @@ pub fn uninstall(options: UninstallOptions) -> Result<()> {
         (None, _) => false,
         (Some(_), Some(delete)) => delete,
         (Some(dir), None) if interactive => Confirm::new(&format!(
-            "Delete the Pack tmux-aside cloned into {}?",
+            "Delete the Pack tmux-aside installed in {}?",
             dir.display()
         ))
         .with_default(false)

@@ -122,10 +122,13 @@ pub fn is_url(source: &str) -> bool {
 }
 
 /// Makes the Pack at `source` available and returns its folder: a path is used in place; a
-/// URL is cloned once into `packs` with the user's git credentials, and pulled fast-forward
-/// only when it was cloned before. The Pack must have a valid manifest.
+/// `.zip` is unzipped into `packs`, replacing whatever was unzipped there before; a URL is
+/// cloned once into `packs` with the user's git credentials, and pulled fast-forward only when
+/// it was cloned before. The Pack must have a valid manifest.
 pub fn install(source: &str, packs: &Path) -> Result<PathBuf> {
-    let dir = if is_url(source) {
+    let dir = if source.ends_with(".zip") && !is_url(source) {
+        unzip(Path::new(source), packs)?
+    } else if is_url(source) {
         let name = source
             .trim_end_matches('/')
             .rsplit(['/', ':'])
@@ -155,7 +158,50 @@ pub fn install(source: &str, packs: &Path) -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// Directory of the Packs cloned from a URL: `$XDG_DATA_HOME/tmux-aside/packs`.
+/// Unzips the Pack in `zip` into `packs`, in a folder named after the file, replacing the one
+/// unzipped before only once the new one has a valid manifest. The manifest may be at the root
+/// of the zip or inside its only folder.
+fn unzip(zip: &Path, packs: &Path) -> Result<PathBuf> {
+    let name = zip
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| anyhow!("cannot name a pack from {}", zip.display()))?;
+    let unzipped = packs.join(format!(".{name}.unzipping"));
+    let _ = std::fs::remove_dir_all(&unzipped);
+    std::fs::create_dir_all(&unzipped)?;
+    let result = (|| {
+        let output = Command::new("unzip")
+            .arg("-q")
+            .arg(zip)
+            .arg("-d")
+            .arg(&unzipped)
+            .output()
+            .context("failed to spawn unzip")?;
+        if !output.status.success() {
+            bail!(
+                "unzip {} failed: {}",
+                zip.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        let root = match std::fs::read_dir(&unzipped)?.collect::<Result<Vec<_>, _>>()?[..] {
+            [ref only] if !unzipped.join(MANIFEST).exists() && only.path().is_dir() => only.path(),
+            _ => unzipped.clone(),
+        };
+        load(&root)?;
+        let dir = packs.join(name);
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)?;
+        }
+        std::fs::rename(&root, &dir)?;
+        Ok(dir)
+    })();
+    let _ = std::fs::remove_dir_all(&unzipped);
+    result
+}
+
+/// Directory of the Packs cloned from a URL or unzipped: `$XDG_DATA_HOME/tmux-aside/packs`.
 pub fn packs_dir() -> Result<PathBuf> {
     Ok(config::data_dir()?.join("packs"))
 }
