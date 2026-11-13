@@ -170,7 +170,7 @@ fn run(cli: Cli) -> Result<()> {
                 let pull_request = pull_requests.get(&launch.id).cloned();
                 Followed {
                     worktree: pull_request.as_ref().filter(|pr| pr.finished()).map(
-                        |pr| match launch.worktree == launch.repository {
+                        |pr| match launch.keeps_worktree || launch.worktree == launch.repository {
                             true => Worktree::Main,
                             false => inspect_worktree(&launch.worktree, pr.head.as_deref()),
                         },
@@ -515,6 +515,9 @@ fn record_pull_requests(
 /// The Nudge is recorded before it is typed, so that a failure or a restart in between can
 /// lose it but never type it twice. A pane that cannot be typed into does not stop the Watcher.
 fn nudge(followed: &mut Followed, language: Language) -> Result<()> {
+    if followed.launch.pane.is_empty() {
+        return Ok(());
+    }
     let Some((key, nudge)) = pending_nudge(followed, language) else {
         return Ok(());
     };

@@ -216,3 +216,20 @@ fn an_old_merged_pull_request_of_a_reused_branch_name_removes_nothing() {
     assert!(setup.worktree.exists());
     assert!(setup.window_open());
 }
+
+#[test]
+fn a_worktree_that_is_not_tmux_asides_is_never_removed() {
+    let setup = Setup::new();
+    let mut launch = setup.scratch.recorded("shop__feat-x");
+    launch.keeps_worktree = true;
+    launch.pull_request = Some("https://github.com/org/shop/pull/12".to_string());
+    setup.scratch.save(&launch);
+    setup.respond(node(json!({"state": "MERGED", "headRefOid": setup.head()})));
+
+    let plugin = setup.start();
+    plugin.rows_where("QA", |rows| line(rows) == "QA · waiting for QA");
+    setup.wait_for_fetches(3);
+
+    assert!(setup.worktree.exists());
+    assert!(setup.window_open());
+}

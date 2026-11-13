@@ -1041,3 +1041,49 @@ fn an_invalid_pack_is_reported_and_the_defaults_are_used() {
             .contains("Add a dark theme")
     );
 }
+
+#[test]
+fn follow_accepts_a_merged_pull_request_and_keeps_its_worktree() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let pane = agent_in_worktree(&server, &repo, "feat/f");
+    let mut command = server.aside_command(&["follow", PR_URL]);
+    command.env("TMUX_PANE", &pane);
+    with_fake_agent(&mut command);
+    answer_pull_request(
+        &mut command,
+        &repo,
+        "feat/f",
+        serde_json::json!({"state": "MERGED"}),
+    );
+
+    let output = command.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(status_json(&server)[0]["keeps_worktree"], true);
+}
+
+#[test]
+fn follow_refuses_a_closed_pull_request() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let pane = agent_in_worktree(&server, &repo, "feat/f");
+    let mut command = server.aside_command(&["follow", PR_URL]);
+    command.env("TMUX_PANE", &pane);
+    with_fake_agent(&mut command);
+    answer_pull_request(
+        &mut command,
+        &repo,
+        "feat/f",
+        serde_json::json!({"state": "CLOSED"}),
+    );
+
+    let output = command.output().unwrap();
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("is not open"));
+}

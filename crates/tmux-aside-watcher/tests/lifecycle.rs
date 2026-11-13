@@ -946,3 +946,22 @@ fn a_criterion_learns_whether_the_agent_is_idle_or_busy_or_gone() {
         None
     );
 }
+
+#[test]
+fn a_launch_without_an_agent_has_no_jump_and_no_window() {
+    let launch = Launch {
+        pane: String::new(),
+        window: String::new(),
+        ..launch("feat/x", "x")
+    };
+
+    let rows = rows(
+        &[following(launch, Some(pull_request(json!({}))))],
+        "tmux-aside",
+        Language::En,
+    );
+
+    assert!(rows[0].action("enter").is_none());
+    assert_eq!(rows[0].window, None);
+    assert!(rows[0].action("p").is_some());
+}

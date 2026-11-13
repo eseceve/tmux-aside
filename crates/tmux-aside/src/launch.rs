@@ -99,6 +99,10 @@ pub struct Launch {
     /// set of pull requests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_qa: Option<String>,
+    /// The worktree is not tmux-aside's, as for a followed or discovered pull request: the
+    /// Watcher never removes it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keeps_worktree: bool,
 }
 
 /// What `tmux-aside launch` was given on the command line.
@@ -129,9 +133,9 @@ struct PullRequestHead {
     state: String,
 }
 
-/// The URL and branch of the pull request at `url`, which must be open and not come from a
-/// fork.
-fn view_pull_request(url: &str, language: Language) -> Result<PullRequestHead> {
+/// The URL and branch of the pull request at `url`, which must not come from a fork and must be
+/// open, or merged when `merged` is accepted.
+fn view_pull_request(url: &str, merged: bool, language: Language) -> Result<PullRequestHead> {
     let output = Command::new("gh")
         .args([
             "pr",
@@ -150,7 +154,7 @@ fn view_pull_request(url: &str, language: Language) -> Result<PullRequestHead> {
     if head.is_cross_repository {
         bail!((language.messages().fork_not_supported)(&head.url));
     }
-    if head.state != "OPEN" {
+    if head.state != "OPEN" && !(merged && head.state == "MERGED") {
         bail!((language.messages().pull_request_not_open)(&head.url));
     }
     Ok(head)
@@ -226,7 +230,7 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
             (name, Checkout::New { base }, None)
         }
         Source::PullRequest(url) => {
-            let head = view_pull_request(&url, language)?;
+            let head = view_pull_request(&url, false, language)?;
             ensure_same_repository(&head.url, &repository, language)?;
             ensure_not_followed(&head.url, language)?;
             let checkout =
@@ -319,6 +323,7 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
         nudges: Vec::new(),
         group: options.group,
         auto_qa: None,
+        keeps_worktree: false,
     };
     write(&record, &launch)?;
     Ok(launch)
@@ -448,6 +453,7 @@ pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
         nudges: Vec::new(),
         group: None,
         auto_qa: None,
+        keeps_worktree: false,
     };
     write(&directory.join(format!("{}.json", launch.id)), &launch)?;
     Ok(launch)
@@ -556,8 +562,9 @@ struct AgentPane {
     command: String,
 }
 
-/// Records the agent in `$TMUX_PANE` as the agent of the pull request at `url`, with the
-/// worktree it runs in, so that the Watcher follows it. Nothing is created: no worktree, no
+/// Records the agent in `$TMUX_PANE` as the agent of the pull request at `url`, open or already
+/// merged, with the worktree it runs in, so that the Watcher follows it. The Watcher never
+/// removes that worktree. Nothing is created: no worktree, no
 /// window, and no record when a check fails.
 pub fn follow(url: &str, language: Language) -> Result<Launch> {
     let messages = language.messages();
@@ -587,7 +594,7 @@ pub fn follow(url: &str, language: Language) -> Result<Launch> {
     }
     let ai: Ai = serde_json::from_value(serde_json::Value::String(agent.command))
         .map_err(|_| not_an_agent())?;
-    let head = view_pull_request(url, language)?;
+    let head = view_pull_request(url, true, language)?;
     let path = Path::new(path);
     let worktree = git(path, &["rev-parse", "--show-toplevel"])
         .map(PathBuf::from)
@@ -628,6 +635,7 @@ pub fn follow(url: &str, language: Language) -> Result<Launch> {
         nudges: Vec::new(),
         group: None,
         auto_qa: None,
+        keeps_worktree: true,
     };
     std::fs::create_dir_all(&directory)?;
     write(&record, &launch)?;
@@ -715,16 +723,25 @@ pub fn describe(launches: &[Launch], language: Language) -> String {
                 (None, false) => messages.no_pull_request,
             };
             let fields = [
-                (messages.repository, launch.repository.display().to_string()),
+                (
+                    messages.repository,
+                    or_dash(&launch.repository.display().to_string()),
+                ),
                 (messages.branch, launch.branch.clone()),
-                (messages.worktree, launch.worktree.display().to_string()),
+                (
+                    messages.worktree,
+                    or_dash(&launch.worktree.display().to_string()),
+                ),
                 (
                     messages.window,
-                    format!("{} {}", launch.session, launch.window),
+                    or_dash(format!("{} {}", launch.session, launch.window).trim()),
                 ),
                 (
                     messages.agent,
-                    format!("{} {}", launch.ai.program(), launch.pane),
+                    match launch.pane.is_empty() {
+                        true => "-".to_string(),
+                        false => format!("{} {}", launch.ai.program(), launch.pane),
+                    },
                 ),
                 (
                     messages.template,
@@ -750,6 +767,13 @@ pub fn describe(launches: &[Launch], language: Language) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn or_dash(value: &str) -> String {
+    match value.is_empty() {
+        true => "-".to_string(),
+        false => value.to_string(),
+    }
 }
 
 /// Runs the agent with the prompt in `prompt_file`, then leaves a shell in the window.

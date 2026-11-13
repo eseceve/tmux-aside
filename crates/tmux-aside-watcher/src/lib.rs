@@ -518,7 +518,8 @@ pub type Answers = Vec<(Stage, Result<Answer, String>)>;
 pub enum Worktree {
     /// Not a git worktree any more, such as after it was removed.
     Missing,
-    /// The clone's main working tree, where a followed agent may run; never removed.
+    /// A worktree that is not tmux-aside's, such as the clone itself or the one of a followed or
+    /// discovered pull request; never removed.
     Main,
     /// Nothing would be lost. Seen after a cleanup, it means the removal failed.
     Clean,
@@ -662,10 +663,13 @@ pub fn rows(all: &[Followed], tmux_aside: &str, language: Language) -> Vec<Row> 
         .map(|followed| {
             let launch = &followed.launch;
             let mut evaluation = evaluate(followed, language);
-            let mut actions = vec![Action {
-                label: Some(messages.go_to_agent.to_string()),
-                ..Action::new("enter", &["tmux", "switch-client", "-t", &launch.pane])
-            }];
+            let mut actions: Vec<Action> = (!launch.pane.is_empty())
+                .then(|| Action {
+                    label: Some(messages.go_to_agent.to_string()),
+                    ..Action::new("enter", &["tmux", "switch-client", "-t", &launch.pane])
+                })
+                .into_iter()
+                .collect();
             let mut row = match &followed.pull_request {
                 Some(pr) => {
                     let number = format!("#{}", pr.number);
@@ -713,7 +717,7 @@ pub fn rows(all: &[Followed], tmux_aside: &str, language: Language) -> Vec<Row> 
                 evaluation.summary
             )];
             row.group = Some(label(launch));
-            row.window = Some(launch.window.clone());
+            row.window = Some(launch.window.clone()).filter(|window| !window.is_empty());
             row.actions = actions;
             row
         })

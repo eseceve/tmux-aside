@@ -236,6 +236,7 @@ pub fn launch(repository: &Path, branch: &str) -> Launch {
         nudges: Vec::new(),
         group: None,
         auto_qa: None,
+        keeps_worktree: false,
     }
 }
 
