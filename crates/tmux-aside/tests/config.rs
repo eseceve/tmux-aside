@@ -61,6 +61,7 @@ fn an_empty_file_has_no_sections() {
             criteria: Criteria::default(),
             auto_qa: false,
             ai: None,
+            pack: None,
         }
     );
 }

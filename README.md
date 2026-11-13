@@ -71,7 +71,7 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 | `tmux-aside toggle` | On if off, off if on. |
 | `tmux-aside focus` | Move the focus to the sidebar of the current window. Does nothing while the sidebar is off. |
 | `tmux-aside reload` | Reread the config and restart the plugins. Sections whose config did not change keep their content. |
-| `tmux-aside setup` | Bind keys in your tmux config (`~/.tmux.conf`, or the XDG one when that is the one you have; `--config` to choose) and install AI hooks, asking for each. |
+| `tmux-aside setup` | Bind keys in your tmux config (`~/.tmux.conf`, or the XDG one when that is the one you have; `--config` to choose), install AI hooks and optionally a [Pack](#packs) (`--pack PATH_OR_URL`), asking for each. |
 | `tmux-aside launch REPO --template NAME --task TEXT --branch BRANCH [--base REF] [--group NAME]` | Start an AI agent on a task in its own branch, worktree and background window. See [Launching agents](#launching-agents). |
 | `tmux-aside launch REPO --template NAME --pr URL [--task TEXT]` | Start an AI agent on an existing pull request, in a worktree of its branch. |
 | `tmux-aside qa URL...` | Launch one QA agent, with a fresh context and the `qa` template, for pull requests that launches follow. |
@@ -100,6 +100,22 @@ tmux-aside ships an `implement` template, an `adopt` one for `--pr`, a `qa` one 
 To take over a pull request that was opened by hand, or whose agent was lost, run `tmux-aside launch ~/src/app --template adopt --pr https://github.com/org/app/pull/12`: it checks out the pull request's branch in a new worktree (reusing the local branch when there is one) and the task reference is the pull request's URL. The pull request must be open and belong to the clone's `origin` on GitHub; pull requests from forks are not supported. When an agent is already working on a pull request, let it register itself instead: `tmux-aside follow https://github.com/org/app/pull/12`, run from its pane (an agent can run it itself), records that agent with the worktree it runs in, and creates nothing. It needs the agent's tmux-aside hooks, so that its status is known.
 
 Add `--group NAME` to put launches that belong together in a Group, such as the pull requests of one task across repositories, or those that must be tested together: the watcher shows them together and runs their QA once, for all of them.
+
+### Packs
+
+A Pack bundles a team's Criteria and Templates, so that everyone launches and follows work the same way without tmux-aside knowing anything private. It is a folder (usually a private git repository) with a `pack.yaml`:
+
+```yaml
+criteria:                     # the stages whose Criterion it replaces; see docs/criteria.md
+  ready_to_merge:
+    command: bin/ready-to-merge   # relative to the Pack's folder
+    args: ["--team", "web"]
+  ready_to_deploy:
+    args: ["--passed-label", "qa:ok", "--failed-label", "qa:ko"]
+templates: templates          # its Templates folder (the default)
+```
+
+Install it with `tmux-aside setup --pack PATH_OR_URL`, or answer the setup's question. A path is used in place, so you can develop a Pack without copying it. A git URL is cloned once, with your own git credentials, into `$XDG_DATA_HOME/tmux-aside/packs/` (`~/.local/share/tmux-aside/packs/` by default); running the command again pulls it fast-forward only, and nothing updates it on its own. Either way setup only writes `pack:` in the config. Templates resolve by name from your own folder, then the Pack's, then the bundled ones, and Criteria from the config's `criteria:`, then the Pack's, then the defaults. tmux-aside reads only the manifest and runs only what it declares; an invalid manifest is reported and the defaults are used.
 
 Launches are recorded in `$XDG_STATE_HOME/tmux-aside/launches/`, so `tmux-aside status` still lists them after tmux or the computer restarts.
 
@@ -132,6 +148,7 @@ theme:                 # colors: names (green, darkgray) or #rrggbb
 auto_reload: false     # reload when this file changes, without tmux-aside reload
 auto_qa: false         # the watcher launches a Group's QA by itself once it is ready
 ai: claude             # the AI launched agents start (claude, codex or agy), unless their template names one
+pack: /home/me/team-pack  # a Pack's folder (~ is not expanded); written by tmux-aside setup --pack
 enter: focus           # focus: Enter jumps to the row; select: Enter shows the row's window and keeps the focus in the sidebar
 language: es           # en or es; your locale's ($LC_ALL, $LC_MESSAGES, $LANG) when unset, else English
 sections:

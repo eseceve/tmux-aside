@@ -73,6 +73,8 @@ pub struct Config {
     /// The AI launched agents start (`claude`, `codex` or `agy`), unless their Template names
     /// one; Claude Code when unset.
     pub ai: Option<String>,
+    /// The folder of the Pack whose Criteria and Templates replace the defaults.
+    pub pack: Option<PathBuf>,
 }
 
 /// The Criterion of each stage of the Lifecycle that replaces the default one, if any.
@@ -129,6 +131,7 @@ struct RawConfig {
     #[serde(default)]
     auto_qa: bool,
     ai: Option<String>,
+    pack: Option<PathBuf>,
 }
 
 #[derive(Deserialize, Default)]
@@ -172,6 +175,12 @@ pub fn templates_dir() -> Result<PathBuf> {
     Ok(xdg_dir("XDG_CONFIG_HOME", ".config")?.join("tmux-aside/templates"))
 }
 
+/// Directory for data tmux-aside keeps, such as cloned Packs: `$XDG_DATA_HOME/tmux-aside`,
+/// defaulting to `~/.local/share`.
+pub fn data_dir() -> Result<PathBuf> {
+    Ok(xdg_dir("XDG_DATA_HOME", ".local/share")?.join("tmux-aside"))
+}
+
 /// Directory for plugin logs: `$XDG_STATE_HOME/tmux-aside`, defaulting to `~/.local/state`.
 pub fn state_dir() -> Result<PathBuf> {
     Ok(xdg_dir("XDG_STATE_HOME", ".local/state")?.join("tmux-aside"))
@@ -203,7 +212,7 @@ pub fn load(path: &Path) -> Result<Option<Config>> {
 pub fn parse(yaml: &str) -> Result<Config> {
     let raw: Option<RawConfig> =
         serde_saphyr::from_str(yaml).map_err(|error| anyhow!("{error}"))?;
-    let (raw_sections, raw_theme, auto_reload, enter, language, criteria, auto_qa, ai) = raw
+    let (raw_sections, raw_theme, auto_reload, enter, language, criteria, auto_qa, ai, pack) = raw
         .map(|raw| {
             (
                 raw.sections,
@@ -214,6 +223,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
                 raw.criteria,
                 raw.auto_qa,
                 raw.ai,
+                raw.pack,
             )
         })
         .unwrap_or_default();
@@ -256,6 +266,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
         criteria,
         auto_qa,
         ai,
+        pack,
     })
 }
 

@@ -2,7 +2,7 @@
 
 A Criterion decides whether a pull request reached a stage of the Lifecycle, and which Nudge, if any, would move it closer. The [watcher](../README.md#watcher) asks the Criteria of the stages after Implementing in order and stops at the first one that is not met. Each pull request's stage is evaluated again on every fetch, so a pull request falls back when a Criterion it met stops holding.
 
-tmux-aside ships a default Criterion for each stage, which use only what GitHub tells; replace any of them in the config:
+tmux-aside ships a default Criterion for each stage, which use only what GitHub tells. A [Pack](../README.md#packs) replaces them with its team's, under `criteria:` in its `pack.yaml`, where a `command` is a path relative to the Pack's folder, and the config replaces either:
 
 ```yaml
 criteria:

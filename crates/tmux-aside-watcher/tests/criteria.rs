@@ -150,3 +150,31 @@ fn an_invalid_criteria_config_shows_on_the_rows() {
     });
     assert_eq!(rows[0].bar_tone, Tone::Danger);
 }
+
+#[test]
+fn a_packs_criterion_replaces_the_default() {
+    let scratch = Scratch::new();
+    scratch.record(&scratch.repository("shop"), "feat/x", true);
+    scratch.respond(found(&[Some(node(json!({})))]));
+    let pack = scratch.0.join("team-pack");
+    std::fs::create_dir_all(pack.join("bin")).unwrap();
+    std::fs::copy(fixture("answer"), pack.join("bin/answer")).unwrap();
+    let answer = json!({"met": false, "summary": "needs the team's review"});
+    std::fs::write(
+        pack.join("pack.yaml"),
+        format!(
+            "criteria:\n  ready_to_merge:\n    command: bin/answer\n    args: [{}, {}]\n",
+            serde_json::to_string(scratch.0.join("question.json").to_str().unwrap()).unwrap(),
+            serde_json::to_string(&answer.to_string()).unwrap(),
+        ),
+    )
+    .unwrap();
+    scratch.configure(&format!("pack: \"{}\"\n", pack.display()));
+
+    let plugin = scratch.start("30s");
+
+    plugin.rows_where("the pack's summary", |rows| {
+        rows.first()
+            .is_some_and(|row| row.lines == ["Implementing · needs the team's review"])
+    });
+}

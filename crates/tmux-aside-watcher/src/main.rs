@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use tmux_aside::config::{self, Criteria, CriterionCommand};
 use tmux_aside::i18n::Language;
 use tmux_aside::launch::{self, Launch};
+use tmux_aside::pack;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
 use tmux_aside::tmux;
 use tmux_aside_agents::{AgentState, agents_dir, state_file};
@@ -260,7 +261,20 @@ fn refresh(launches: &[Launch], language: Language) -> Result<Refresh> {
     record_pull_requests(launches, &pull_requests)?;
     let config = config::load(&config::default_path()?);
     let auto_qa = matches!(&config, Ok(Some(config)) if config.auto_qa);
-    let configured = config.map(|config| config.map(|config| config.criteria).unwrap_or_default());
+    let configured = config.map(|config| {
+        config
+            .map(|config| {
+                let pack = pack::configured(&config).unwrap_or_else(|error| {
+                    eprintln!(
+                        "{}",
+                        (messages(language).invalid_pack)(&format!("{error:#}"))
+                    );
+                    None
+                });
+                pack::criteria(&config, pack.as_ref())
+            })
+            .unwrap_or_default()
+    });
     let answers = match configured.map(criteria) {
         Ok(criteria) => ask_criteria(&pull_requests, &criteria, language),
         Err(error) => {

@@ -54,6 +54,8 @@ pub struct Messages {
     pub failed_to_start: fn(&str) -> String,
     /// The config holding the Criteria could not be read.
     pub invalid_config: fn(&str) -> String,
+    /// The Pack the config names could not be read; the defaults are used.
+    pub invalid_pack: fn(&str) -> String,
     go_to_agent: &'static str,
     open_pull_request: &'static str,
 }
@@ -95,6 +97,7 @@ const EN: Messages = Messages {
     invalid_answer: |output| format!("invalid answer: {output}"),
     failed_to_start: |program| format!("failed to start {program}"),
     invalid_config: |error| format!("invalid config: {error}"),
+    invalid_pack: |error| format!("{error}; using the default criteria"),
     go_to_agent: "go to the agent",
     open_pull_request: "open the pull request in the browser",
 };
@@ -136,6 +139,7 @@ const ES: Messages = Messages {
     invalid_answer: |output| format!("respuesta inválida: {output}"),
     failed_to_start: |program| format!("no se pudo iniciar {program}"),
     invalid_config: |error| format!("config inválida: {error}"),
+    invalid_pack: |error| format!("{error}; se usan los criterios por defecto"),
     go_to_agent: "ir al agente",
     open_pull_request: "abrir el pull request en el navegador",
 };

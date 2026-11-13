@@ -58,6 +58,9 @@ enum Command {
         /// Install no AI hooks
         #[arg(long)]
         no_hooks: bool,
+        /// Use the Pack at this path, or clone it from this git URL (pulled again on each run)
+        #[arg(long, value_name = "PATH_OR_URL")]
+        pack: Option<String>,
         /// Take the default of everything not given, without asking
         #[arg(long)]
         yes: bool,
@@ -176,6 +179,7 @@ fn main() -> Result<()> {
             reload,
             hooks,
             no_hooks,
+            pack,
             yes,
         } => setup::run(setup::Options {
             config,
@@ -193,6 +197,7 @@ fn main() -> Result<()> {
             } else {
                 hooks.map(|ais| ais.into_iter().map(Ai::from).collect())
             },
+            pack,
             defaults: yes,
         }),
         Command::Launch {

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::config;
 use crate::hooks::shell_quote;
 use crate::i18n::Language;
+use crate::pack;
 use crate::setup::Ai;
 use crate::tmux;
 
@@ -200,7 +201,7 @@ fn ensure_not_followed(url: &str, language: Language) -> Result<()> {
 /// filled-in Template and records the Launch. Nothing is created when a check fails.
 pub fn run(options: Options, language: Language) -> Result<Launch> {
     let messages = language.messages();
-    let template = find_template(&options.template)?
+    let template = find_template(&options.template, language)?
         .ok_or_else(|| anyhow!((messages.unknown_template)(&options.template)))?;
     let repository = git(&options.repository, &["rev-parse", "--show-toplevel"])
         .map(PathBuf::from)
@@ -394,7 +395,7 @@ fn open_agent_window(
 /// Task reference lists the URLs. The QA Launch opens no pull request of its own.
 pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
     let messages = language.messages();
-    let template = find_template(QA_TEMPLATE)?
+    let template = find_template(QA_TEMPLATE, language)?
         .ok_or_else(|| anyhow!((messages.unknown_template)(QA_TEMPLATE)))?;
     let launches = list()?;
     let mut repository = None;
@@ -774,18 +775,31 @@ fn choose_ai(template: &Template, language: Language) -> Result<Ai> {
     }
 }
 
-fn find_template(name: &str) -> Result<Option<Template>> {
-    let own = config::templates_dir()?.join(format!("{name}.md"));
-    match std::fs::read_to_string(&own) {
-        Ok(text) => {
-            return Template::parse(&text)
-                .with_context(|| format!("invalid template {}", own.display()))
-                .map(Some);
+/// The Template `name`: the user's own, then the Pack's, then the bundled one. A Pack that
+/// cannot be read is reported and skipped.
+fn find_template(name: &str, language: Language) -> Result<Option<Template>> {
+    let mut folders = vec![config::templates_dir()?];
+    let config = config::load(&config::default_path()?)?;
+    match config.as_ref().map(pack::configured).transpose() {
+        Ok(pack) => folders.extend(pack.flatten().map(|pack| pack.templates)),
+        Err(error) => eprintln!(
+            "{}",
+            (language.messages().invalid_pack)(&format!("{error:#}"))
+        ),
+    }
+    for folder in folders {
+        let path = folder.join(format!("{name}.md"));
+        match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                return Template::parse(&text)
+                    .with_context(|| format!("invalid template {}", path.display()))
+                    .map(Some);
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(error).with_context(|| format!("failed to read {}", path.display()));
+            }
+            Err(_) => {}
         }
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-            return Err(error).with_context(|| format!("failed to read {}", own.display()));
-        }
-        Err(_) => {}
     }
     BUNDLED_TEMPLATES
         .iter()

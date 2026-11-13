@@ -11,6 +11,7 @@ use crate::hooks::{shell_quote, tmux_quote};
 use crate::i18n::Language;
 use crate::plugin;
 use crate::tmux;
+use crate::{config, pack};
 
 const BLOCK_START: &str = "# >>> tmux-aside >>>";
 const BLOCK_END: &str = "# <<< tmux-aside <<<";
@@ -138,6 +139,8 @@ pub struct Options {
     pub config: Option<PathBuf>,
     pub keys: Vec<(Action, String)>,
     pub ais: Option<Vec<Ai>>,
+    /// A Pack's path or git URL.
+    pub pack: Option<String>,
     pub defaults: bool,
 }
 
@@ -322,6 +325,21 @@ pub fn run(options: Options) -> Result<()> {
         None => Ai::ALL.to_vec(),
     };
 
+    let pack = match options.pack {
+        Some(pack) => Some(pack),
+        None if interactive => Some(
+            Text::new("Pack (path or git URL, empty for none):")
+                .with_help_message("a private bundle of Criteria and Templates for your team")
+                .prompt()
+                .context("setup canceled; nothing was changed")?,
+        )
+        .filter(|pack| !pack.trim().is_empty()),
+        None => None,
+    };
+    let pack = pack
+        .map(|source| pack::install(source.trim(), &pack::packs_dir()?))
+        .transpose()?;
+
     if live {
         for binding in &bindings {
             tmux::run(
@@ -362,6 +380,28 @@ pub fn run(options: Options) -> Result<()> {
         for (plugin, argument) in ai.setups() {
             install_hooks(plugin, argument);
         }
+    }
+
+    if let Some(dir) = pack {
+        let config = config::default_path()?;
+        let existing = match std::fs::read_to_string(&config) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => {
+                return Err(error).with_context(|| format!("failed to read {}", config.display()));
+            }
+        };
+        if let Some(parent) = config.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if !existing.is_empty() {
+            let mut backup = config.clone().into_os_string();
+            backup.push(".bak");
+            std::fs::write(backup, &existing)?;
+        }
+        std::fs::write(&config, pack::with_pack_key(&existing, Some(&dir)))
+            .with_context(|| format!("failed to write {}", config.display()))?;
+        println!("pack {} set in {}", dir.display(), config.display());
     }
     Ok(())
 }

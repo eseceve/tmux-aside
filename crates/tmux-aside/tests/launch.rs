@@ -966,3 +966,78 @@ fn an_unsupported_ai_in_the_config_fails_too() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported AI: aider"));
     assert_nothing_created(&server, &repo, "feat/aider");
 }
+
+/// A Pack in the scratch home with `templates`, each as name and text, named in the config.
+fn use_pack(server: &TmuxServer, manifest: &str, templates: &[(&str, &str)]) {
+    let pack = server.home.path("team-pack");
+    std::fs::create_dir_all(pack.join("templates")).unwrap();
+    std::fs::write(pack.join("pack.yaml"), manifest).unwrap();
+    for (name, text) in templates {
+        std::fs::write(pack.join(format!("templates/{name}.md")), text).unwrap();
+    }
+    server
+        .home
+        .write_config(&format!("pack: \"{}\"\n", pack.display()));
+}
+
+fn launched_prompt(server: &TmuxServer, repo: &Repo, template: &str, branch: &str) -> String {
+    launch_ok(
+        server,
+        repo,
+        &["--template", template, "--task", "x", "--branch", branch],
+    );
+    let prompt = repo
+        .worktree(&branch.replace('/', "-"))
+        .join(".agent-prompt");
+    wait_for("the agent to start", || prompt.exists());
+    std::fs::read_to_string(prompt).unwrap()
+}
+
+#[test]
+fn templates_resolve_from_the_user_then_the_pack_then_the_bundled_ones() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    use_pack(
+        &server,
+        "templates: templates\n",
+        &[
+            ("implement", "Pack implements ${task}.\n"),
+            ("review", "Pack reviews ${task}.\n"),
+        ],
+    );
+    own_template(&server, "review", "I review ${task}.\n");
+
+    assert_eq!(
+        launched_prompt(&server, &repo, "implement", "feat/a"),
+        "Pack implements x.\n"
+    );
+    assert_eq!(
+        launched_prompt(&server, &repo, "review", "feat/b"),
+        "I review x.\n"
+    );
+    assert!(launched_prompt(&server, &repo, "adopt", "feat/c").contains("taking over"));
+}
+
+#[test]
+fn an_invalid_pack_is_reported_and_the_defaults_are_used() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    use_pack(
+        &server,
+        "criteria:\n  merged:\n    command: x\n",
+        &[("implement", "Pack implements ${task}.\n")],
+    );
+
+    let output = launch_ok(&server, &repo, &implement("feat/a"));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("invalid pack manifest"), "{stderr}");
+    assert!(stderr.contains("using the default"), "{stderr}");
+    let prompt = repo.worktree("feat-a").join(".agent-prompt");
+    wait_for("the agent to start", || prompt.exists());
+    assert!(
+        std::fs::read_to_string(prompt)
+            .unwrap()
+            .contains("Add a dark theme")
+    );
+}

@@ -5,6 +5,7 @@ pub mod hooks;
 pub mod i18n;
 pub mod launch;
 pub mod layout;
+pub mod pack;
 pub mod plugin;
 pub mod protocol;
 pub mod render;
