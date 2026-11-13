@@ -368,3 +368,25 @@ fn prune_removes_an_orphan_whose_remote_branch_is_gone() {
 
     assert!(!worktree.exists());
 }
+
+#[test]
+fn a_launch_whose_worktree_and_branch_were_deleted_by_hand_is_still_removed() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let worktree = launched(&server, &repo, "feat/gone-by-hand");
+    git_in(
+        &repo.clone(),
+        &["worktree", "remove", "--force", worktree.to_str().unwrap()],
+    );
+    git_in(&repo.clone(), &["branch", "-D", "feat/gone-by-hand"]);
+
+    let report = succeeded(
+        &server
+            .aside_command(&["remove", "clone__feat-gone-by-hand"])
+            .output()
+            .unwrap(),
+    );
+
+    assert_eq!(report.trim(), "removed clone__feat-gone-by-hand");
+    assert_eq!(records(&server), 0);
+}

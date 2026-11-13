@@ -12,6 +12,7 @@ Turn the request into `tmux-aside` commands. Hold no logic of your own: the QA a
 - `tmux-aside status --json`: every launch with its pull request and group. Use it to turn "the theme group" or "#12" into pull request URLs.
 - `tmux-aside qa <url>...`: one QA agent, with a fresh context and the `qa` template, for the given pull requests. Each must be followed by a launch.
 - `tmux-aside fix <url>`: an agent that fixes what the QA of that pull request found, on a new branch in the same group. QA reruns for both once the fix reaches QA.
+- `tmux-aside remove <QA launch id>`: once QA finished, close the QA agent's window and forget its launch; the clone it worked in is kept. Its id starts with the repository and `qa-` in `tmux-aside status --json`.
 
 ## Choosing
 
