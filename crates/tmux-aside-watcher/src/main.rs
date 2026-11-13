@@ -164,6 +164,7 @@ fn run(cli: Cli) -> Result<()> {
             pull_requests,
             answers,
             auto_qa,
+            on_deployed,
         } = &latest;
         let mut followed: Vec<Followed> = launches
             .into_iter()
@@ -187,6 +188,9 @@ fn run(cli: Cli) -> Result<()> {
             if should_clean_up(followed) && clean_up(&followed.launch) {
                 followed.worktree = Some(Worktree::Missing);
             }
+        }
+        if *on_deployed {
+            run_on_deployed(&mut followed, &tmux_aside, language);
         }
         let (gone, mut followed): (Vec<Followed>, Vec<Followed>) = followed
             .into_iter()
@@ -263,6 +267,50 @@ fn launch_due_qa(followed: &mut [Followed], tmux_aside: &str, language: Language
     Ok(())
 }
 
+/// Runs the `on_deployed` action once, with `tmux-aside deployed` in the clone of the first
+/// one, for every pull request deployed that it did not run for yet, whose output stays off
+/// the plugin's stdout. Records it first, so that a failure never runs it twice.
+fn run_on_deployed(followed: &mut [Followed], tmux_aside: &str, language: Language) {
+    let mut command = Command::new(tmux_aside);
+    command.arg("deployed");
+    let mut urls = Vec::new();
+    let mut directory = None;
+    for member in followed.iter_mut().filter(|member| {
+        !member.launch.ran_on_deployed && evaluate(member, language).stage == Stage::Deployed
+    }) {
+        let Some(pull_request) = &member.pull_request else {
+            continue;
+        };
+        urls.push(pull_request.url.clone());
+        command.args(["--task", &member.launch.task]);
+        directory.get_or_insert_with(|| member.launch.repository.clone());
+        member.launch.ran_on_deployed = true;
+        if let Err(error) = launch::update(&member.launch.id, |launch| {
+            launch.ran_on_deployed = true;
+        }) {
+            eprintln!("{error:#}");
+        }
+    }
+    if urls.is_empty() {
+        return;
+    }
+    if let Some(directory) = directory.filter(|directory| directory.is_dir()) {
+        command.current_dir(directory);
+    }
+    let started = command
+        .args(&urls)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn();
+    match started {
+        Ok(mut child) => {
+            std::thread::spawn(move || child.wait());
+        }
+        Err(error) => eprintln!("{tmux_aside} deployed {}: {error}", urls.join(" ")),
+    }
+}
+
 /// What one fetch learned: the pull request of each Launch and its Criteria's answers, both
 /// keyed by Launch id.
 #[derive(Default)]
@@ -271,6 +319,8 @@ struct Refresh {
     answers: HashMap<String, Answers>,
     /// The config asks the Watcher to launch QA by itself.
     auto_qa: bool,
+    /// The config or the Pack has an action for deployed pull requests.
+    on_deployed: bool,
 }
 
 /// Fetches the launched pull requests, records newly found ones and asks their Criteria. Runs
@@ -284,6 +334,7 @@ fn refresh(launches: &[Launch], language: Language) -> Result<Refresh> {
         discover(&config.discover, launches);
     }
     let auto_qa = matches!(&config, Ok(Some(config)) if config.auto_qa);
+    let mut on_deployed = false;
     let configured = config.map(|config| {
         config
             .map(|config| {
@@ -294,6 +345,7 @@ fn refresh(launches: &[Launch], language: Language) -> Result<Refresh> {
                     );
                     None
                 });
+                on_deployed = pack::on_deployed(&config, pack.as_ref()).is_some();
                 pack::criteria(&config, pack.as_ref())
             })
             .unwrap_or_default()
@@ -319,6 +371,7 @@ fn refresh(launches: &[Launch], language: Language) -> Result<Refresh> {
         pull_requests,
         answers,
         auto_qa,
+        on_deployed,
     })
 }
 

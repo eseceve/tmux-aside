@@ -780,6 +780,7 @@ pub fn discovered(url: &str) -> Option<Launch> {
         group: None,
         auto_qa: None,
         keeps_worktree: true,
+        ran_on_deployed: false,
     })
 }
 

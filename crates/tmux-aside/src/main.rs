@@ -113,6 +113,16 @@ enum Command {
         #[arg(required = true)]
         urls: Vec<String>,
     },
+    /// Run the on_deployed action, an AI with the deployed template, for these deployed pull
+    /// requests
+    Deployed {
+        /// URLs of the pull requests
+        #[arg(required = true)]
+        urls: Vec<String>,
+        /// Task reference of a pull request, for ${task} in the template [default: the URLs]
+        #[arg(long = "task", value_name = "TASK")]
+        tasks: Vec<String>,
+    },
     /// Launch an agent that fixes what QA found in a pull request, in its repository and Group
     Fix {
         /// URL of the pull request whose QA failed, followed by a launch
@@ -268,6 +278,7 @@ fn main() -> Result<()> {
             println!("{}", launch::announce(&launch, language));
             Ok(())
         }
+        Command::Deployed { urls, tasks } => launch::deployed(&urls, &tasks, Language::detect()),
         Command::Fix { url } => {
             let language = Language::detect();
             let launch = launch::fix(&url, language)?;

@@ -804,6 +804,84 @@ fn the_qa_agent_is_told_the_labels_the_config_names() {
     assert!(!prompt.contains("qa:passed"), "{prompt}");
 }
 
+/// Runs `tmux-aside deployed` in the clone with `args`.
+fn run_deployed(server: &TmuxServer, repo: &Repo, args: &[&str]) -> Output {
+    let mut command = server.aside_command(&[&["deployed"], args].concat());
+    with_fake_agent(&mut command).current_dir(repo.clone());
+    command.output().unwrap()
+}
+
+#[test]
+fn deployed_runs_the_ai_headless_with_the_tasks_and_urls_of_the_deployed_pull_requests() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    own_template(&server, "deployed", "Sync ${task} (${urls})");
+    let windows = server.window_ids().len();
+
+    let output = run_deployed(
+        &server,
+        &repo,
+        &[
+            "--task",
+            "T-2",
+            "--task",
+            "T-1",
+            "--task",
+            "T-2",
+            PR_URL,
+            "https://github.com/org/shop/pull/3",
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.clone().join(".agent-prompt")).unwrap(),
+        format!("Sync T-1 T-2 (https://github.com/org/shop/pull/3 {PR_URL})")
+    );
+    assert_eq!(server.window_ids().len(), windows);
+}
+
+#[test]
+fn deployed_opens_a_window_when_its_action_asks_for_one() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    server
+        .home
+        .write_config("on_deployed:\n  template: sync\n  window: true\n");
+    own_template(&server, "sync", "Sync ${task}");
+    let windows = server.window_ids().len();
+
+    let output = run_deployed(&server, &repo, &[PR_URL]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(server.window_ids().len(), windows + 1);
+    let prompt = repo.clone().join(".agent-prompt");
+    wait_for("the agent to start", || prompt.exists());
+    assert_eq!(
+        std::fs::read_to_string(prompt).unwrap(),
+        format!("Sync {PR_URL}")
+    );
+}
+
+#[test]
+fn deployed_without_its_template_fails() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+
+    let output = run_deployed(&server, &repo, &[PR_URL]);
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown template: deployed"));
+}
+
 #[test]
 fn launch_records_the_group() {
     let server = TmuxServer::start(1);

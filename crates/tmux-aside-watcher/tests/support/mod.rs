@@ -247,6 +247,7 @@ pub fn launch(repository: &Path, branch: &str) -> Launch {
         group: None,
         auto_qa: None,
         keeps_worktree: false,
+        ran_on_deployed: false,
     }
 }
 

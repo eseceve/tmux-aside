@@ -4,7 +4,7 @@ use std::process::Command;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
-use crate::config::{self, Config, Criteria, CriterionCommand};
+use crate::config::{self, Config, Criteria, CriterionCommand, DeployedAction};
 
 /// The manifest every Pack holds at its root.
 pub const MANIFEST: &str = "pack.yaml";
@@ -17,6 +17,8 @@ pub struct Pack {
     pub criteria: Criteria,
     /// The folder of the Pack's Templates.
     pub templates: PathBuf,
+    /// What the Watcher does once pull requests are deployed, unless the config says.
+    pub on_deployed: Option<DeployedAction>,
 }
 
 #[derive(Deserialize)]
@@ -25,6 +27,7 @@ struct Manifest {
     #[serde(default)]
     criteria: Criteria,
     templates: Option<String>,
+    on_deployed: Option<DeployedAction>,
 }
 
 /// Reads the manifest of the Pack in `dir`. Criterion commands and the Templates folder are
@@ -51,6 +54,7 @@ pub fn load(dir: &Path) -> Result<Pack> {
             deployed: inside(manifest.criteria.deployed),
         },
         templates: dir.join(manifest.templates.as_deref().unwrap_or(DEFAULT_TEMPLATES)),
+        on_deployed: manifest.on_deployed,
     })
 }
 
@@ -77,6 +81,14 @@ pub fn criteria(config: &Config, pack: Option<&Pack>) -> Criteria {
         ready_to_deploy: configured.ready_to_deploy.or(from_pack.ready_to_deploy),
         deployed: configured.deployed.or(from_pack.deployed),
     }
+}
+
+/// What the Watcher does once pull requests are deployed: the config's, then the Pack's.
+pub fn on_deployed(config: &Config, pack: Option<&Pack>) -> Option<DeployedAction> {
+    config
+        .on_deployed
+        .clone()
+        .or_else(|| pack.and_then(|pack| pack.on_deployed.clone()))
 }
 
 /// Whether `source` is a git URL (`https://...`, `file://...`, `git@host:path`, `host:path`)

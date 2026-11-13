@@ -64,6 +64,7 @@ fn an_empty_file_has_no_sections() {
             ai: None,
             pack: None,
             discover: vec![],
+            on_deployed: None,
         }
     );
 }

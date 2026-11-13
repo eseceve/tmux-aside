@@ -1,4 +1,5 @@
 #!/bin/sh
+[ "$1" = --print ] && { printf %s "$2" > "$PWD/.agent-prompt"; exit 0; }
 [ "$1" = --prompt-interactive ] || exit 1
 printf %s "$2" > "$PWD/.agent-prompt.partial"
 mv "$PWD/.agent-prompt.partial" "$PWD/.agent-prompt"

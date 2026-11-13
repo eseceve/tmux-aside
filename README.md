@@ -76,6 +76,7 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 | `tmux-aside launch REPO --template NAME --task TEXT --branch BRANCH [--base REF] [--group NAME]` | Start an AI agent on a task in its own branch, worktree and background window. See [Launching agents](#launching-agents). |
 | `tmux-aside launch REPO --template NAME --pr URL [--task TEXT]` | Start an AI agent on an existing pull request, in a worktree of its branch. |
 | `tmux-aside qa URL...` | Launch one QA agent, with a fresh context and the `qa` template, for pull requests that launches follow. |
+| `tmux-aside deployed URL... [--task TEXT]...` | Run the [`on_deployed` action](#watcher) for deployed pull requests, in the current directory. The watcher runs it by itself. |
 | `tmux-aside fix URL` | Launch an agent that fixes what QA found in a pull request, on a new branch in its repository and Group. |
 | `tmux-aside follow URL` | Run from an agent's pane: make that agent the one the [watcher](#watcher) follows and nudges for the pull request. |
 | `tmux-aside status [--json]` | List every launch with its repository, branch, worktree, window, agent, template, task, pull request and the stage the watcher last saw it in, with what it is missing (`QA · waiting for QA`). |
@@ -118,9 +119,11 @@ criteria:                     # the stages whose Criterion it replaces; see docs
   ready_to_deploy:
     args: ["--passed-label", "qa:ok", "--failed-label", "qa:ko"]
 templates: templates          # its Templates folder (the default)
+on_deployed:                  # what the watcher does once pull requests are deployed
+  template: deployed
 ```
 
-Install it with `tmux-aside setup --pack PATH_OR_URL`, or answer the setup's question. A path is used in place, so you can develop a Pack without copying it. A git URL is cloned once, with your own git credentials, into `$XDG_DATA_HOME/tmux-aside/packs/` (`~/.local/share/tmux-aside/packs/` by default); running the command again pulls it fast-forward only, and nothing updates it on its own. Either way setup only writes `pack:` in the config. Templates resolve by name from your own folder, then the Pack's, then the bundled ones, and Criteria from the config's `criteria:`, then the Pack's, then the defaults. tmux-aside reads only the manifest and runs only what it declares; an invalid manifest is reported and the defaults are used.
+Install it with `tmux-aside setup --pack PATH_OR_URL`, or answer the setup's question. A path is used in place, so you can develop a Pack without copying it. A git URL is cloned once, with your own git credentials, into `$XDG_DATA_HOME/tmux-aside/packs/` (`~/.local/share/tmux-aside/packs/` by default); running the command again pulls it fast-forward only, and nothing updates it on its own. Either way setup only writes `pack:` in the config. Templates resolve by name from your own folder, then the Pack's, then the bundled ones, Criteria from the config's `criteria:`, then the Pack's, then the defaults, and `on_deployed` from the config's, then the Pack's. tmux-aside reads only the manifest and runs only what it declares; an invalid manifest is reported and the defaults are used.
 
 Launches are recorded in `$XDG_STATE_HOME/tmux-aside/launches/`, so `tmux-aside status` still lists them after tmux or the computer restarts.
 
@@ -152,6 +155,9 @@ theme:                 # colors: names (green, darkgray) or #rrggbb
   current: "#78a9ff"   # text of the rows that belong to the window you are in
 auto_reload: false     # reload when this file changes, without tmux-aside reload
 auto_qa: false         # the watcher launches a Group's QA by itself once it is ready
+on_deployed:           # the watcher starts an AI once pull requests are deployed; nothing when unset
+  template: deployed   # the template it starts with (the default)
+  window: false        # true: an interactive agent in a background window; false: headless (the default)
 ai: claude             # the AI launched agents start (claude, codex or agy), unless their template names one
 pack: /home/me/team-pack  # a Pack's folder (~ is not expanded); written by tmux-aside setup --pack
 enter: focus           # focus: Enter jumps to the row; select: Enter shows the row's window and keeps the focus in the sidebar
@@ -238,6 +244,13 @@ A closed pull request leaves too. To have the watcher nudge agents, clean up and
 ```yaml
 - plugin: watcher
   mode: stream
+```
+
+To act once pull requests are in production, such as updating their tasks, set `on_deployed:` in the config or the Pack. In each fetch, the watcher runs `tmux-aside deployed` once for every pull request that reached Deployed since the last one, in the clone of the first. It starts the AI with the `deployed` template (`template:` names another), where `${task}` stands for their distinct Task references and `${urls}` for their URLs, each sorted and joined by spaces; a pull request nobody launched has its URL as Task reference. It runs once per pull request, even if it fails. By default the AI runs headless (`claude -p`, `codex exec`, `agy --print`) and its output goes to the watcher's log, so it can only use the tools it is already allowed to; `window: true` starts an interactive agent in a background window instead. With the default Deployed Criterion, a pull request is deployed as soon as it has the `qa:passed` label.
+
+```markdown
+<!-- ~/.config/tmux-aside/templates/deployed.md -->
+Update the status of the tasks ${task}, whose pull requests ${urls} are in production.
 ```
 
 When the pull request has conflicts, or unresolved review comments, the watcher types a Nudge into its agent asking it to resolve or answer them. It types only while the agent is idle (done, not working or waiting for you, with its status reported by the [agents](#agents) hooks) and you are not looking at its pane, and at most once per stage and head commit of the pull request, so a new push allows it again.

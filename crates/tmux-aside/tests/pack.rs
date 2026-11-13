@@ -145,6 +145,27 @@ fn the_configs_criteria_win_over_the_packs() {
 }
 
 #[test]
+fn the_configs_deployed_action_wins_over_the_packs() {
+    let dir = Dir::new();
+    write_pack(&dir.0, "on_deployed:\n  template: sync\n");
+    let pack = pack::load(&dir.0).unwrap();
+
+    let from_pack = pack::on_deployed(&parse("").unwrap(), Some(&pack)).unwrap();
+    let configured = parse("on_deployed:\n  window: true\n").unwrap();
+    let from_config = pack::on_deployed(&configured, Some(&pack)).unwrap();
+
+    assert_eq!(
+        (from_pack.template.as_str(), from_pack.window),
+        ("sync", false)
+    );
+    assert_eq!(
+        (from_config.template.as_str(), from_config.window),
+        ("deployed", true)
+    );
+    assert_eq!(pack::on_deployed(&parse("").unwrap(), None), None);
+}
+
+#[test]
 fn an_invalid_manifest_is_reported_clearly() {
     let dir = Dir::new();
     write_pack(&dir.0, "criteria:\n  merged:\n    command: bin/x\n");

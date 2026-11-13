@@ -80,6 +80,34 @@ pub struct Config {
     pub pack: Option<PathBuf>,
     /// Where the Watcher finds pull requests to follow without a Launch.
     pub discover: Vec<DiscoverySource>,
+    /// What the Watcher does once pull requests are deployed.
+    pub on_deployed: Option<DeployedAction>,
+}
+
+/// An AI the Watcher starts with a Template once pull requests are deployed, once for all
+/// the pull requests deployed in the same fetch.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeployedAction {
+    /// The Template the AI is started with; `deployed` when unset.
+    #[serde(default = "default_deployed_template")]
+    pub template: String,
+    /// Open a window with an interactive agent instead of running the AI headless.
+    #[serde(default)]
+    pub window: bool,
+}
+
+impl Default for DeployedAction {
+    fn default() -> Self {
+        DeployedAction {
+            template: default_deployed_template(),
+            window: false,
+        }
+    }
+}
+
+fn default_deployed_template() -> String {
+    "deployed".to_string()
 }
 
 /// A source of pull requests the Watcher follows by itself.
@@ -153,6 +181,7 @@ struct RawConfig {
     pack: Option<PathBuf>,
     #[serde(default)]
     discover: Vec<DiscoverySource>,
+    on_deployed: Option<DeployedAction>,
 }
 
 #[derive(Deserialize, Default)]
@@ -245,6 +274,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
         ai,
         pack,
         discover,
+        on_deployed,
     ) = raw
         .map(|raw| {
             (
@@ -258,6 +288,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
                 raw.ai,
                 raw.pack,
                 raw.discover,
+                raw.on_deployed,
             )
         })
         .unwrap_or_default();
@@ -303,6 +334,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
         ai,
         pack,
         discover,
+        on_deployed,
     })
 }
 

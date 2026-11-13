@@ -121,6 +121,16 @@ impl Ai {
         }
     }
 
+    /// The arguments that run the AI headless on `prompt` and exit once it answered.
+    pub fn print_arguments(self, prompt: &str) -> Vec<String> {
+        let flag = match self {
+            Ai::Claude => "-p",
+            Ai::Codex => "exec",
+            Ai::Agy => "--print",
+        };
+        vec![flag.to_string(), prompt.to_string()]
+    }
+
     /// The folder the AI reads its skills from, or `None` when tmux-aside installs none for
     /// it: `$CLAUDE_CONFIG_DIR/skills` (`~/.claude/skills`) and `$CODEX_HOME/skills`
     /// (`~/.codex/skills`).

@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
+use std::os::fd::AsFd;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -104,6 +105,9 @@ pub struct Launch {
     /// Watcher never removes it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub keeps_worktree: bool,
+    /// The Watcher ran the `on_deployed` action for its pull request.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ran_on_deployed: bool,
 }
 
 /// What `tmux-aside launch` was given on the command line.
@@ -325,6 +329,7 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
         group: options.group,
         auto_qa: None,
         keeps_worktree: false,
+        ran_on_deployed: false,
     };
     write(&record, &launch)?;
     Ok(launch)
@@ -468,9 +473,70 @@ pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
         group: None,
         auto_qa: None,
         keeps_worktree: false,
+        ran_on_deployed: false,
     };
     write(&directory.join(format!("{}.json", launch.id)), &launch)?;
     Ok(launch)
+}
+
+/// Runs the config's or the Pack's `on_deployed` action for the deployed pull requests at
+/// `urls`, in the current directory: the AI starts with its Template, where `${task}` stands
+/// for the distinct `tasks` (the URLs when none is given) and `${urls}` for the URLs, both
+/// sorted and joined by spaces. Headless, the AI's output goes to stderr and this waits for
+/// it; otherwise it opens a window with an interactive agent.
+pub fn deployed(urls: &[String], tasks: &[String], language: Language) -> Result<()> {
+    let messages = language.messages();
+    let config = config::load(&config::default_path()?)?;
+    let action = match &config {
+        Some(config) => pack::on_deployed(config, pack::configured(config)?.as_ref()),
+        None => None,
+    }
+    .unwrap_or_default();
+    let template = find_template(&action.template, language)?
+        .ok_or_else(|| anyhow!((messages.unknown_template)(&action.template)))?;
+    let ai = choose_ai(&template, language)?;
+    let program = find_on_path(ai.program())
+        .ok_or_else(|| anyhow!((messages.agent_not_found)(ai.program())))?;
+    let sorted = |values: &[String]| {
+        let mut values = values.to_vec();
+        values.sort();
+        values.dedup();
+        values.join(" ")
+    };
+    let prompt = template
+        .prompt(&sorted(if tasks.is_empty() { urls } else { tasks }))
+        .replace("${urls}", &sorted(urls));
+    if !action.window {
+        let status = Command::new(&program)
+            .args(ai.print_arguments(&prompt))
+            .stdin(Stdio::null())
+            .stdout(std::io::stderr().as_fd().try_clone_to_owned()?)
+            .status()
+            .with_context(|| format!("failed to run {}", program.display()))?;
+        if !status.success() {
+            bail!("{} {status}", ai.program());
+        }
+        return Ok(());
+    }
+    let numbers: Vec<&str> = urls.iter().map(|url| pull_request_number(url)).collect();
+    let handle = format!("deployed-{}", numbers.join("-"));
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or_default();
+    let directory = launches_dir()?;
+    std::fs::create_dir_all(&directory)?;
+    let prompt_file = directory.join(format!("{handle}-{started}.prompt"));
+    std::fs::write(&prompt_file, prompt)?;
+    open_agent_window(
+        &current_session()?,
+        &handle,
+        &std::env::current_dir()?,
+        ai,
+        &program,
+        &prompt_file,
+    )?;
+    Ok(())
 }
 
 /// Launches an agent that fixes what the QA of the pull request at `url` found, with the `fix`
@@ -660,6 +726,7 @@ pub fn follow(url: &str, language: Language) -> Result<Launch> {
         group: None,
         auto_qa: None,
         keeps_worktree: true,
+        ran_on_deployed: false,
     };
     std::fs::create_dir_all(&directory)?;
     write(&record, &launch)?;

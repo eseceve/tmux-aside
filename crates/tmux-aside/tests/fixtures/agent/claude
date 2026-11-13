@@ -1,4 +1,5 @@
 #!/bin/sh
+[ "$1" = -p ] && { printf %s "$2" > "$PWD/.agent-prompt"; exit 0; }
 printf %s "$1" > "$PWD/.agent-prompt.partial"
 mv "$PWD/.agent-prompt.partial" "$PWD/.agent-prompt"
 exec sleep 60
