@@ -396,7 +396,8 @@ fn open_agent_window(
 }
 
 /// Launches one QA agent, with a fresh context and the `qa` Template, for the pull requests at
-/// `urls`, in a window at the clone of the first one. Each must be followed by a Launch. The
+/// `urls`, in a window at the clone of the first one, or in the current directory when no clone
+/// is recorded for them (a discovered pull request). Each must be followed by a Launch. The
 /// Task reference lists the URLs. The QA Launch opens no pull request of its own.
 pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
     let messages = language.messages();
@@ -410,10 +411,22 @@ pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
             .iter()
             .find(|launch| launch.pull_request.as_deref() == Some(url.as_str()))
             .ok_or_else(|| anyhow!((messages.not_followed)(url)))?;
-        repository.get_or_insert_with(|| followed.repository.clone());
+        if repository.is_none() && !followed.repository.as_os_str().is_empty() {
+            repository = Some(followed.repository.clone());
+        }
         numbers.push(pull_request_number(url).to_string());
     }
-    let repository = repository.ok_or_else(|| anyhow!(messages.no_pull_requests))?;
+    let first = urls
+        .first()
+        .ok_or_else(|| anyhow!(messages.no_pull_requests))?;
+    let name = match &repository {
+        Some(repository) => file_name(repository)?.to_string(),
+        None => repository_name(first),
+    };
+    let repository = match repository {
+        Some(repository) => repository,
+        None => std::env::current_dir()?,
+    };
     let ai = choose_ai(&template, language)?;
     let program = find_on_path(ai.program())
         .ok_or_else(|| anyhow!((messages.agent_not_found)(ai.program())))?;
@@ -423,7 +436,7 @@ pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis())
         .unwrap_or_default();
-    let id = format!("{}__{handle}-{started}", file_name(&repository)?);
+    let id = format!("{name}__{handle}-{started}");
     let directory = launches_dir()?;
     std::fs::create_dir_all(&directory)?;
     let task = urls.join(" ");
@@ -524,6 +537,16 @@ fn qa_labels() -> Result<(String, String)> {
         label("--passed-label", "qa:passed"),
         label("--failed-label", "qa:failed"),
     ))
+}
+
+/// The name of the repository of the pull request at `url`, such as `app` in
+/// `https://github.com/org/app/pull/12`.
+fn repository_name(url: &str) -> String {
+    url.split("/pull/")
+        .next()
+        .and_then(|repository| repository.rsplit('/').next())
+        .unwrap_or("repo")
+        .to_string()
 }
 
 /// The number of the pull request at `url`, such as `12` in `https://github.com/o/r/pull/12/files`.

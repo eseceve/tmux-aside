@@ -1087,3 +1087,45 @@ fn follow_refuses_a_closed_pull_request() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("is not open"));
 }
+
+#[test]
+fn qa_of_a_discovered_pull_request_opens_in_the_current_directory() {
+    let server = TmuxServer::start(1);
+    let here = server.home.path("here");
+    std::fs::create_dir_all(&here).unwrap();
+    let launches = launches_dir(&server.home);
+    std::fs::create_dir_all(&launches).unwrap();
+    std::fs::write(
+        launches.join("shop__pr-7.json"),
+        serde_json::json!({
+            "id": "shop__pr-7", "repository": "", "branch": "feat/f", "worktree": "",
+            "session": "", "window": "", "pane": "", "ai": "claude", "template": null,
+            "task": PR_URL, "opens_pull_request": true, "pull_request": PR_URL,
+            "keeps_worktree": true
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let mut command = server.aside_command(&["qa", PR_URL]);
+    command.current_dir(&here);
+    with_fake_agent(&mut command);
+    let output = command.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let prompt = here.join(".agent-prompt");
+    wait_for("the QA agent to start", || prompt.exists());
+    assert!(std::fs::read_to_string(prompt).unwrap().contains(PR_URL));
+    let qa = status_json(&server)
+        .into_iter()
+        .find(|launch| launch["template"] == "qa")
+        .unwrap();
+    assert!(
+        qa["id"].as_str().unwrap().starts_with("shop__qa-7-"),
+        "{qa}"
+    );
+}
