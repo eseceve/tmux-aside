@@ -59,6 +59,7 @@ fn an_empty_file_has_no_sections() {
             enter: EnterAction::Focus,
             language: None,
             criteria: Criteria::default(),
+            auto_qa: false,
         }
     );
 }

@@ -803,3 +803,17 @@ fn the_qa_agent_is_told_the_labels_the_config_names() {
     );
     assert!(!prompt.contains("qa:passed"), "{prompt}");
 }
+
+#[test]
+fn launch_records_the_group() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+
+    launch_ok(
+        &server,
+        &repo,
+        &[implement("feat/grouped").as_slice(), &["--group", "theme"]].concat(),
+    );
+
+    assert_eq!(status_json(&server)[0]["group"], "theme");
+}

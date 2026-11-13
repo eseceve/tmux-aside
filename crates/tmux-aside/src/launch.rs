@@ -84,6 +84,13 @@ pub struct Launch {
     /// Nudges already typed into the agent, each as `stage@head commit`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nudges: Vec<String>,
+    /// The Group it belongs to; a Launch without one is a Group of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// The pull requests the Watcher last launched QA for by itself, so it does it once per
+    /// set of pull requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_qa: Option<String>,
 }
 
 /// What `tmux-aside launch` was given on the command line.
@@ -93,6 +100,8 @@ pub struct Options {
     /// The Task reference; the pull request's URL when adopting one and none is given.
     pub task: Option<String>,
     pub source: Source,
+    /// The Group the Launch joins.
+    pub group: Option<String>,
 }
 
 /// Where a Launch's branch comes from.
@@ -300,6 +309,8 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
         opens_pull_request: pull_request.is_some() || template.opens_pull_request,
         pull_request,
         nudges: Vec::new(),
+        group: options.group,
+        auto_qa: None,
     };
     write(&record, &launch)?;
     Ok(launch)
@@ -423,6 +434,8 @@ pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
         opens_pull_request: false,
         pull_request: None,
         nudges: Vec::new(),
+        group: None,
+        auto_qa: None,
     };
     write(&directory.join(format!("{}.json", launch.id)), &launch)?;
     Ok(launch)
@@ -554,6 +567,8 @@ pub fn follow(url: &str, language: Language) -> Result<Launch> {
         opens_pull_request: true,
         pull_request: Some(head.url),
         nudges: Vec::new(),
+        group: None,
+        auto_qa: None,
     };
     std::fs::create_dir_all(&directory)?;
     write(&record, &launch)?;
@@ -658,6 +673,10 @@ pub fn describe(launches: &[Launch], language: Language) -> String {
                 ),
                 (messages.task, launch.task.clone()),
                 (messages.pull_request, pull_request.to_string()),
+                (
+                    messages.group,
+                    launch.group.clone().unwrap_or_else(|| "-".to_string()),
+                ),
             ];
             let width = fields
                 .iter()

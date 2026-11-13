@@ -28,6 +28,7 @@ pub struct Messages {
     waiting_to_be_deployed: &'static str,
     in_production: &'static str,
     launch_qa: &'static str,
+    qa_waits_for: fn(&str) -> String,
     worktree_removed: &'static str,
     removal_failed: &'static str,
     uncommitted_kept: &'static str,
@@ -72,6 +73,7 @@ const EN: Messages = Messages {
     waiting_to_be_deployed: "waiting to be deployed",
     in_production: "in production",
     launch_qa: "launch QA",
+    qa_waits_for: |missing| format!("waiting for {missing}"),
     worktree_removed: "worktree removed",
     removal_failed: "the worktree could not be removed",
     uncommitted_kept: "uncommitted changes kept in the worktree",
@@ -111,6 +113,7 @@ const ES: Messages = Messages {
     waiting_to_be_deployed: "esperando el despliegue",
     in_production: "en producción",
     launch_qa: "lanzar QA",
+    qa_waits_for: |missing| format!("esperando a {missing}"),
     worktree_removed: "worktree eliminado",
     removal_failed: "no se pudo eliminar el worktree",
     uncommitted_kept: "cambios sin commitear conservados en el worktree",
@@ -521,16 +524,111 @@ pub fn should_clean_up(followed: &Followed) -> bool {
         && followed.worktree == Some(Worktree::Clean)
 }
 
-/// One row per followed Launch, in the given order and grouped by repository. Enter jumps to
-/// the agent's pane; `p` opens the pull request in the browser; `q`, in QA, launches a QA
-/// agent for it with `tmux_aside`, the path to the `tmux-aside` command.
-pub fn rows(followed: &[Followed], tmux_aside: &str, language: Language) -> Vec<Row> {
-    let messages = messages(language);
-    followed
+/// The key of the Group of `launch`: its Group's name, or its own id when it has none.
+pub fn group_key(launch: &Launch) -> String {
+    launch
+        .group
+        .as_ref()
+        .map_or_else(|| launch.id.clone(), |group| format!("group:{group}"))
+}
+
+/// Where a Group stands for QA.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupQa {
+    /// Every pull request of the Group reached QA and at least one waits for it.
+    pub ready: bool,
+    /// The pull requests QA waits for, as `#12` or the branch while there is none.
+    pub waiting_for: Vec<String>,
+    /// The URLs of the Group's pull requests that reached QA, ordered.
+    pub urls: Vec<String>,
+}
+
+/// Where the Group `key` stands for QA among `followed`: QA runs once for all its pull
+/// requests, when every one reached QA.
+pub fn group_qa(followed: &[Followed], key: &str, language: Language) -> GroupQa {
+    let mut waiting_for = Vec::new();
+    let mut urls = Vec::new();
+    let mut needs_qa = false;
+    for member in followed
         .iter()
+        .filter(|member| group_key(&member.launch) == key)
+    {
+        let stage = evaluate(member, language).stage;
+        match (stage, &member.pull_request) {
+            (Stage::Qa | Stage::ReadyToDeploy | Stage::Deployed, Some(pr)) => {
+                needs_qa |= stage == Stage::Qa;
+                urls.push(pr.url.clone());
+            }
+            (Stage::Closed, _) => {}
+            (_, Some(pr)) => waiting_for.push(format!("#{}", pr.number)),
+            (_, None) => waiting_for.push(member.launch.branch.clone()),
+        }
+    }
+    urls.sort();
+    waiting_for.sort();
+    GroupQa {
+        ready: needs_qa && waiting_for.is_empty(),
+        waiting_for,
+        urls,
+    }
+}
+
+/// The Groups whose QA the Watcher launches by itself now: ready, with a pull request QA was
+/// not launched for yet, such as a fix that joined the Group. A member leaving never makes
+/// it due again. Each comes with its pull requests' URLs and its Launches' ids.
+pub fn due_for_qa(followed: &[Followed], language: Language) -> Vec<(Vec<String>, Vec<String>)> {
+    let mut keys: Vec<String> = followed
+        .iter()
+        .map(|member| group_key(&member.launch))
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys.into_iter()
+        .filter_map(|key| {
+            let qa = group_qa(followed, &key, language);
+            let members: Vec<&Followed> = followed
+                .iter()
+                .filter(|member| group_key(&member.launch) == key)
+                .collect();
+            let launched: Vec<&str> = members
+                .iter()
+                .filter_map(|member| member.launch.auto_qa.as_deref())
+                .flat_map(str::split_whitespace)
+                .collect();
+            let done = qa.urls.iter().all(|url| launched.contains(&url.as_str()));
+            (qa.ready && !done).then(|| {
+                let ids = members
+                    .iter()
+                    .map(|member| member.launch.id.clone())
+                    .collect();
+                (qa.urls, ids)
+            })
+        })
+        .collect()
+}
+
+/// One row per followed Launch, the rows of a Group together under its name (a Launch
+/// without one under its repository's). Enter jumps to the agent's pane; `p` opens the pull
+/// request in the browser; `q`, once its Group is ready for QA, launches one QA agent for
+/// the whole Group with `tmux_aside`, the path to the `tmux-aside` command.
+pub fn rows(all: &[Followed], tmux_aside: &str, language: Language) -> Vec<Row> {
+    let messages = messages(language);
+    let label = |launch: &Launch| {
+        launch.group.clone().unwrap_or_else(|| {
+            launch
+                .repository
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        })
+    };
+    let mut ordered: Vec<&Followed> = all.iter().collect();
+    ordered.sort_by_key(|followed| (label(&followed.launch), followed.launch.id.clone()));
+    ordered
+        .into_iter()
         .map(|followed| {
             let launch = &followed.launch;
-            let evaluation = evaluate(followed, language);
+            let mut evaluation = evaluate(followed, language);
             let mut actions = vec![Action {
                 label: Some(messages.go_to_agent.to_string()),
                 ..Action::new("enter", &["tmux", "switch-client", "-t", &launch.pane])
@@ -549,11 +647,20 @@ pub fn rows(followed: &[Followed], tmux_aside: &str, language: Language) -> Vec<
                 }
                 None => Row::new(launch.task.clone()),
             };
-            if let (Stage::Qa, Some(pr)) = (evaluation.stage, &followed.pull_request) {
-                actions.push(Action {
-                    label: Some(messages.launch_qa.to_string()),
-                    ..Action::new("q", &[tmux_aside, "qa", &pr.url])
-                });
+            if evaluation.stage == Stage::Qa {
+                let qa = group_qa(all, &group_key(launch), language);
+                if qa.ready {
+                    let command: Vec<&str> = [tmux_aside, "qa"]
+                        .into_iter()
+                        .chain(qa.urls.iter().map(String::as_str))
+                        .collect();
+                    actions.push(Action {
+                        label: Some(messages.launch_qa.to_string()),
+                        ..Action::new("q", &command)
+                    });
+                } else if !qa.waiting_for.is_empty() && evaluation.tone != Tone::Danger {
+                    evaluation.summary = (messages.qa_waits_for)(&qa.waiting_for.join(", "));
+                }
             }
             row.detail_tone = evaluation.tone;
             row.bar_tone = evaluation.tone;
@@ -562,10 +669,7 @@ pub fn rows(followed: &[Followed], tmux_aside: &str, language: Language) -> Vec<
                 evaluation.stage.name(language),
                 evaluation.summary
             )];
-            row.group = launch
-                .repository
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned());
+            row.group = Some(label(launch));
             row.window = Some(launch.window.clone());
             row.actions = actions;
             row

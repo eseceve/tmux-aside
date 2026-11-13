@@ -103,6 +103,11 @@ impl Scratch {
 
     /// Starts the Watcher inside the tmux server `tmux`, when given.
     pub fn start_in(&self, interval: &str, tmux: Option<&Tmux>) -> Plugin {
+        self.start_with(&["--interval", interval], tmux)
+    }
+
+    /// Starts the Watcher with `args`, inside the tmux server `tmux` when given.
+    pub fn start_with(&self, args: &[&str], tmux: Option<&Tmux>) -> Plugin {
         let path = std::env::var("PATH").unwrap_or_default();
         let mut command = Command::new(env!("CARGO_BIN_EXE_tmux-aside-watcher"));
         match tmux {
@@ -111,7 +116,7 @@ impl Scratch {
         };
         let mut child = command
             .env_remove("TMUX_PANE")
-            .args(["--interval", interval])
+            .args(args)
             .env("PATH", format!("{}:{path}", self.0.join("bin").display()))
             .env("XDG_STATE_HOME", self.0.join("state"))
             .env("XDG_CONFIG_HOME", self.0.join("config"))
@@ -229,6 +234,8 @@ pub fn launch(repository: &Path, branch: &str) -> Launch {
         opens_pull_request: true,
         pull_request: None,
         nudges: Vec::new(),
+        group: None,
+        auto_qa: None,
     }
 }
 

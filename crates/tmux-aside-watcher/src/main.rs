@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use tmux_aside::config::{self, CriterionCommand};
+use tmux_aside::config::{self, Criteria, CriterionCommand};
 use tmux_aside::i18n::Language;
 use tmux_aside::launch::{self, Launch};
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
@@ -17,8 +17,9 @@ use tmux_aside_agents::{AgentState, agents_dir, state_file};
 use tmux_aside_github::PullRequest;
 use tmux_aside_watcher::{
     Answer, Answers, Followed, LivePane, Question, Stage, Target, Worktree, ask_in_order,
-    batch_query, choose_pull_request, deployed, github_repository, is_idle, leaves, messages,
-    parse_batch, pending_nudge, qa, ready_to_deploy, ready_to_merge, rows, should_clean_up,
+    batch_query, choose_pull_request, deployed, due_for_qa, github_repository, is_idle, leaves,
+    messages, parse_batch, pending_nudge, qa, ready_to_deploy, ready_to_merge, rows,
+    should_clean_up,
 };
 
 const TICK: Duration = Duration::from_secs(1);
@@ -39,6 +40,9 @@ struct Cli {
     /// Section title [default: "Lifecycle", in the sidebar's language]
     #[arg(long)]
     title: Option<String>,
+    /// The tmux-aside command that launches QA [default: the one next to this binary, or in PATH]
+    #[arg(long, value_name = "PATH")]
+    tmux_aside: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -112,14 +116,16 @@ fn run(cli: Cli) -> Result<()> {
         for _ in std::io::stdin().lock().lines() {}
         std::process::exit(0);
     });
-    let tmux_aside = std::env::current_exe()
-        .ok()
-        .and_then(|exe| Some(exe.parent()?.join("tmux-aside")))
-        .filter(|sibling| sibling.is_file())
-        .map_or_else(
-            || "tmux-aside".to_string(),
-            |sibling| sibling.to_string_lossy().into_owned(),
-        );
+    let tmux_aside = cli.tmux_aside.unwrap_or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.join("tmux-aside")))
+            .filter(|sibling| sibling.is_file())
+            .map_or_else(
+                || "tmux-aside".to_string(),
+                |sibling| sibling.to_string_lossy().into_owned(),
+            )
+    });
     let mut latest = Refresh::default();
     let mut refreshing: Option<Receiver<Result<Refresh>>> = None;
     let mut fetched: Option<(Instant, Vec<String>)> = None;
@@ -155,6 +161,7 @@ fn run(cli: Cli) -> Result<()> {
         let Refresh {
             pull_requests,
             answers,
+            auto_qa,
         } = &latest;
         let mut followed: Vec<Followed> = launches
             .into_iter()
@@ -179,11 +186,14 @@ fn run(cli: Cli) -> Result<()> {
                 followed.worktree = Some(Worktree::Missing);
             }
         }
-        let (gone, followed): (Vec<Followed>, Vec<Followed>) = followed
+        let (gone, mut followed): (Vec<Followed>, Vec<Followed>) = followed
             .into_iter()
             .partition(|followed| leaves(followed, language));
         for followed in gone {
             launch::forget(&followed.launch.id)?;
+        }
+        if *auto_qa {
+            launch_due_qa(&mut followed, &tmux_aside, language)?;
         }
         let snapshot = serde_json::to_string(&PluginMessage::Snapshot {
             title: Some(title.clone()),
@@ -198,12 +208,49 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// Launches QA for every Group ready for it whose pull requests had no QA launched yet, with
+/// `tmux-aside qa`, whose output stays off the plugin's stdout. Records it first, so that a
+/// failure never launches it twice.
+fn launch_due_qa(followed: &mut [Followed], tmux_aside: &str, language: Language) -> Result<()> {
+    for (urls, ids) in due_for_qa(followed, language) {
+        let launched = urls.join(" ");
+        for member in followed
+            .iter_mut()
+            .filter(|member| ids.contains(&member.launch.id))
+        {
+            member.launch.auto_qa = Some(launched.clone());
+            let launched = launched.clone();
+            if let Err(error) =
+                launch::update(&member.launch.id, |launch| launch.auto_qa = Some(launched))
+            {
+                eprintln!("{error:#}");
+            }
+        }
+        let started = Command::new(tmux_aside)
+            .arg("qa")
+            .args(&urls)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn();
+        match started {
+            Ok(mut child) => {
+                std::thread::spawn(move || child.wait());
+            }
+            Err(error) => eprintln!("{tmux_aside} qa {launched}: {error}"),
+        }
+    }
+    Ok(())
+}
+
 /// What one fetch learned: the pull request of each Launch and its Criteria's answers, both
 /// keyed by Launch id.
 #[derive(Default)]
 struct Refresh {
     pull_requests: HashMap<String, PullRequest>,
     answers: HashMap<String, Answers>,
+    /// The config asks the Watcher to launch QA by itself.
+    auto_qa: bool,
 }
 
 /// Fetches the launched pull requests, records newly found ones and asks their Criteria. Runs
@@ -211,7 +258,10 @@ struct Refresh {
 fn refresh(launches: &[Launch], language: Language) -> Result<Refresh> {
     let pull_requests = fetch(launches, language)?;
     record_pull_requests(launches, &pull_requests)?;
-    let answers = match criteria() {
+    let config = config::load(&config::default_path()?);
+    let auto_qa = matches!(&config, Ok(Some(config)) if config.auto_qa);
+    let configured = config.map(|config| config.map(|config| config.criteria).unwrap_or_default());
+    let answers = match configured.map(criteria) {
         Ok(criteria) => ask_criteria(&pull_requests, &criteria, language),
         Err(error) => {
             let error = (messages(language).invalid_config)(&format!("{error:#}"));
@@ -224,15 +274,13 @@ fn refresh(launches: &[Launch], language: Language) -> Result<Refresh> {
     Ok(Refresh {
         pull_requests,
         answers,
+        auto_qa,
     })
 }
 
 /// The command of each stage's Criterion after Implementing, in Lifecycle order: the one in
 /// the config, or the default one, which this binary runs.
-fn criteria() -> Result<Vec<(Stage, Vec<String>, Duration)>> {
-    let configured = config::load(&config::default_path()?)?
-        .map(|config| config.criteria)
-        .unwrap_or_default();
+fn criteria(configured: Criteria) -> Vec<(Stage, Vec<String>, Duration)> {
     let exe = std::env::current_exe()
         .map(|exe| exe.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "tmux-aside-watcher".to_string());
@@ -247,7 +295,7 @@ fn criteria() -> Result<Vec<(Stage, Vec<String>, Duration)>> {
         }
         None => (stage, default(name), DEFAULT_TIMEOUT),
     };
-    Ok(vec![
+    vec![
         command(
             Stage::ReadyToMerge,
             configured.ready_to_merge,
@@ -260,7 +308,7 @@ fn criteria() -> Result<Vec<(Stage, Vec<String>, Duration)>> {
             "ready-to-deploy",
         ),
         command(Stage::Deployed, configured.deployed, "deployed"),
-    ])
+    ]
 }
 
 /// Asks the Criteria of every open pull request, all pull requests at once, each one's stages

@@ -11,8 +11,9 @@ use tmux_aside_agents::{AgentState, Status};
 use tmux_aside_github::{PullRequest, parse_pull_request};
 use tmux_aside_watcher::{
     Answer, Answers, Followed, LivePane, Stage, Target, Worktree, ask_in_order, batch_query,
-    choose_pull_request, deployed, evaluate, github_repository, is_idle, leaves, parse_batch,
-    pending_nudge, qa, ready_to_deploy, ready_to_merge, rows, should_clean_up,
+    choose_pull_request, deployed, due_for_qa, evaluate, github_repository, group_key, group_qa,
+    is_idle, leaves, parse_batch, pending_nudge, qa, ready_to_deploy, ready_to_merge, rows,
+    should_clean_up,
 };
 
 fn pull_request(changes: Value) -> PullRequest {
@@ -699,4 +700,125 @@ fn a_failed_qa_stays_red_even_when_the_worktree_is_kept() {
 
     assert_eq!(evaluation.summary, "QA failed");
     assert_eq!(evaluation.tone, Tone::Danger);
+}
+
+fn member(branch: &str, group: Option<&str>, repository: &str, pr: Option<Value>) -> Followed {
+    let launch = Launch {
+        group: group.map(str::to_string),
+        ..support::launch(&Path::new("/src").join(repository), branch)
+    };
+    following(launch, pr.map(|pr| parse_pull_request(&pr).unwrap()))
+}
+
+fn merged_pr(number: u64) -> Value {
+    node(json!({
+        "state": "MERGED",
+        "number": number,
+        "url": format!("https://github.com/org/shop/pull/{number}"),
+    }))
+}
+
+#[test]
+fn rows_of_the_same_group_are_shown_together_under_its_name() {
+    let followed = [
+        member("feat/a", Some("theme"), "shop", None),
+        member("feat/b", None, "api", None),
+        member("feat/c", Some("theme"), "web", None),
+    ];
+
+    let rows = rows(&followed, "tmux-aside", Language::En);
+
+    let groups: Vec<&str> = rows
+        .iter()
+        .map(|row| row.group.as_deref().unwrap())
+        .collect();
+    assert_eq!(groups, ["api", "theme", "theme"]);
+}
+
+#[test]
+fn qa_waits_until_every_pull_request_of_the_group_reached_qa() {
+    let followed = [
+        member("feat/a", Some("theme"), "shop", Some(merged_pr(1))),
+        member(
+            "feat/b",
+            Some("theme"),
+            "shop",
+            Some(node(json!({"number": 2}))),
+        ),
+        member("feat/c", Some("theme"), "shop", None),
+    ];
+
+    let qa = group_qa(&followed, &group_key(&followed[0].launch), Language::En);
+    let rows = rows(&followed, "tmux-aside", Language::En);
+
+    assert!(!qa.ready);
+    assert_eq!(qa.waiting_for, ["#2", "feat/c"]);
+    let waiting = rows
+        .iter()
+        .find(|row| row.detail.as_deref() == Some("#1"))
+        .unwrap();
+    assert_eq!(waiting.lines, ["QA · waiting for #2, feat/c"]);
+    assert!(waiting.action("q").is_none());
+}
+
+#[test]
+fn the_qa_key_launches_qa_for_the_whole_ready_group() {
+    let followed = [
+        member("feat/a", Some("theme"), "shop", Some(merged_pr(1))),
+        member("feat/b", Some("theme"), "shop", Some(merged_pr(2))),
+        member("feat/c", None, "shop", Some(merged_pr(3))),
+    ];
+
+    let rows = rows(&followed, "tmux-aside", Language::En);
+
+    let row = rows
+        .iter()
+        .find(|row| row.detail.as_deref() == Some("#1"))
+        .unwrap();
+    assert_eq!(
+        row.action("q").unwrap(),
+        [
+            "tmux-aside",
+            "qa",
+            "https://github.com/org/shop/pull/1",
+            "https://github.com/org/shop/pull/2",
+        ]
+    );
+}
+
+#[test]
+fn qa_is_due_once_per_set_of_pull_requests_of_a_ready_group() {
+    let mut followed = vec![
+        member("feat/a", Some("theme"), "shop", Some(merged_pr(1))),
+        member("feat/b", Some("theme"), "shop", Some(merged_pr(2))),
+    ];
+
+    let due = due_for_qa(&followed, Language::En);
+    assert_eq!(due.len(), 1);
+    let launched = due[0].0.join(" ");
+    for member in &mut followed {
+        member.launch.auto_qa = Some(launched.clone());
+    }
+    assert!(due_for_qa(&followed, Language::En).is_empty());
+
+    let mut fix = member("fix/a", Some("theme"), "shop", Some(merged_pr(3)));
+    fix.launch.auto_qa = None;
+    followed.push(fix);
+    assert_eq!(due_for_qa(&followed, Language::En)[0].0.len(), 3);
+}
+
+#[test]
+fn qa_is_not_due_again_when_a_member_leaves_the_group() {
+    let mut followed = vec![
+        member("feat/a", Some("theme"), "shop", Some(merged_pr(1))),
+        member("feat/b", Some("theme"), "shop", Some(merged_pr(2))),
+    ];
+    let launched = due_for_qa(&followed, Language::En)[0].0.join(" ");
+    for member in &mut followed {
+        member.launch.auto_qa = Some(launched.clone());
+    }
+
+    followed.remove(0);
+
+    assert!(due_for_qa(&followed, Language::En).is_empty());
 }

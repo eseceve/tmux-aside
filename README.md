@@ -72,7 +72,7 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 | `tmux-aside focus` | Move the focus to the sidebar of the current window. Does nothing while the sidebar is off. |
 | `tmux-aside reload` | Reread the config and restart the plugins. Sections whose config did not change keep their content. |
 | `tmux-aside setup` | Bind keys in your tmux config (`~/.tmux.conf`, or the XDG one when that is the one you have; `--config` to choose) and install AI hooks, asking for each. |
-| `tmux-aside launch REPO --template NAME --task TEXT --branch BRANCH [--base REF]` | Start Claude Code on a task in its own branch, worktree and background window. See [Launching agents](#launching-agents). |
+| `tmux-aside launch REPO --template NAME --task TEXT --branch BRANCH [--base REF] [--group NAME]` | Start Claude Code on a task in its own branch, worktree and background window. See [Launching agents](#launching-agents). |
 | `tmux-aside launch REPO --template NAME --pr URL [--task TEXT]` | Start Claude Code on an existing pull request, in a worktree of its branch. |
 | `tmux-aside qa URL...` | Launch one QA agent, with a fresh context and the `qa` template, for pull requests that launches follow. |
 | `tmux-aside follow URL` | Run from an agent's pane: make that agent the one the [watcher](#watcher) follows and nudges for the pull request. |
@@ -94,6 +94,8 @@ Implement ${task} and open a pull request.
 tmux-aside ships an `implement` template, an `adopt` one for `--pr` and a `qa` one for `tmux-aside qa`. Your own go in `$XDG_CONFIG_HOME/tmux-aside/templates/NAME.md` (`~/.config/tmux-aside/templates/` by default) and replace a bundled one with the same name.
 
 To take over a pull request that was opened by hand, or whose agent was lost, run `tmux-aside launch ~/src/app --template adopt --pr https://github.com/org/app/pull/12`: it checks out the pull request's branch in a new worktree (reusing the local branch when there is one) and the task reference is the pull request's URL. The pull request must be open and belong to the clone's `origin` on GitHub; pull requests from forks are not supported. When an agent is already working on a pull request, let it register itself instead: `tmux-aside follow https://github.com/org/app/pull/12`, run from its pane (an agent can run it itself), records that agent with the worktree it runs in, and creates nothing. It needs the agent's tmux-aside hooks, so that its status is known.
+
+Add `--group NAME` to put launches that belong together in a Group, such as the pull requests of one task across repositories, or those that must be tested together: the watcher shows them together and runs their QA once, for all of them.
 
 Launches are recorded in `$XDG_STATE_HOME/tmux-aside/launches/`, so `tmux-aside status` still lists them after tmux or the computer restarts.
 
@@ -124,6 +126,7 @@ theme:                 # colors: names (green, darkgray) or #rrggbb
   selection: "#393939" # background of the selected line; reversed text when unset
   current: "#78a9ff"   # text of the rows that belong to the window you are in
 auto_reload: false     # reload when this file changes, without tmux-aside reload
+auto_qa: false         # the watcher launches a Group's QA by itself once it is ready
 enter: focus           # focus: Enter jumps to the row; select: Enter shows the row's window and keeps the focus in the sidebar
 language: es           # en or es; your locale's ($LC_ALL, $LC_MESSAGES, $LANG) when unset, else English
 sections:
@@ -187,10 +190,10 @@ Lists the pull requests matching a [GitHub search](https://docs.github.com/en/se
 Follows the pull request of every [launch](#launching-agents) whose template opens one: the open pull request of its branch on GitHub, or the one it already followed once that is merged or closed (pull requests from forks are ignored), with one row per launch grouped by repository. Each row shows the stage of the Lifecycle and what it is missing: `Implementing · waiting for approval`, `Implementing · conflicts`, `Ready to merge · waiting to be merged`, `QA · waiting for QA`. By default:
 
 - **Implementing → Ready to merge**: the pull request is approved, its checks pass and it merges cleanly. It goes back to Implementing when that stops being true.
-- **QA**: once merged, the change waits to be verified in a pre-production environment. Press `q` on its row, or run `tmux-aside qa URL...`, to launch a QA agent with the `qa` template; it records its verdict as the `qa:passed` or `qa:failed` label with a comment of the cases it tested. `qa:failed` turns the row red.
+- **QA**: once merged, the change waits to be verified in a pre-production environment. The pull requests of a Group are verified together, once every one reached QA; until then their rows say which ones QA waits for (`QA · waiting for #13`). Press `q` on a row of a ready Group, or run `tmux-aside qa URL...`, to launch one QA agent for all of them with the `qa` template; it records its verdict as the `qa:passed` or `qa:failed` label with a comment of the cases it tested. `qa:failed` turns the row red.
 - **Ready to deploy → Deployed**: with the `qa:passed` label the change is ready to go to production, and by default it counts as deployed right away, so its row leaves. A Deployed Criterion of your own, one that knows your deploy pipeline, keeps the row at Ready to deploy until the change is in production.
 
-A closed pull request leaves too. Runs with `mode: stream`:
+A closed pull request leaves too. Set `auto_qa: true` at the top of the config to have the watcher launch a Group's QA by itself once the Group is ready, once per set of pull requests; `q` and `tmux-aside qa` can repeat it either way. Runs with `mode: stream`:
 
 ```yaml
 - plugin: watcher
@@ -210,7 +213,8 @@ criteria:
 ```
 
 - `--interval 30s`: how often pull requests are fetched, all of them in one GitHub query.
-- Keys on a row: `enter` jumps to the agent, `p` opens the pull request, `q` launches QA for a pull request in QA.
+- `--tmux-aside PATH`: the `tmux-aside` command QA is launched with, when it is not next to the watcher or in `PATH`.
+- Keys on a row: `enter` jumps to the agent, `p` opens the pull request, `q` launches QA for its Group once the Group is ready.
 
 ### usage
 

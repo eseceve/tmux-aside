@@ -68,6 +68,8 @@ pub struct Config {
     pub language: Option<Language>,
     /// Commands replacing the Watcher's default Criteria, per stage.
     pub criteria: Criteria,
+    /// The Watcher launches a Group's QA by itself once all its pull requests reached QA.
+    pub auto_qa: bool,
 }
 
 /// The Criterion of each stage of the Lifecycle that replaces the default one, if any.
@@ -121,6 +123,8 @@ struct RawConfig {
     language: Option<Language>,
     #[serde(default)]
     criteria: Criteria,
+    #[serde(default)]
+    auto_qa: bool,
 }
 
 #[derive(Deserialize, Default)]
@@ -195,7 +199,7 @@ pub fn load(path: &Path) -> Result<Option<Config>> {
 pub fn parse(yaml: &str) -> Result<Config> {
     let raw: Option<RawConfig> =
         serde_saphyr::from_str(yaml).map_err(|error| anyhow!("{error}"))?;
-    let (raw_sections, raw_theme, auto_reload, enter, language, criteria) = raw
+    let (raw_sections, raw_theme, auto_reload, enter, language, criteria, auto_qa) = raw
         .map(|raw| {
             (
                 raw.sections,
@@ -204,6 +208,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
                 raw.enter,
                 raw.language,
                 raw.criteria,
+                raw.auto_qa,
             )
         })
         .unwrap_or_default();
@@ -244,6 +249,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
         enter,
         language,
         criteria,
+        auto_qa,
     })
 }
 

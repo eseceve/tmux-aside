@@ -82,6 +82,9 @@ enum Command {
         /// Adopt an existing pull request: check out its branch instead of creating one
         #[arg(long, value_name = "URL")]
         pr: Option<String>,
+        /// Group whose pull requests are shown and tested together
+        #[arg(long)]
+        group: Option<String>,
     },
     /// Launch one QA agent, with a fresh context and the qa template, for these pull requests
     Qa {
@@ -190,6 +193,7 @@ fn main() -> Result<()> {
             branch,
             base,
             pr,
+            group,
         } => {
             let language = Language::detect();
             let source = match (pr, branch) {
@@ -203,6 +207,7 @@ fn main() -> Result<()> {
                     template,
                     task,
                     source,
+                    group,
                 },
                 language,
             )?;
