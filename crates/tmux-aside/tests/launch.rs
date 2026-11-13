@@ -950,6 +950,8 @@ fn resurrect_leaves_a_launch_whose_agent_is_still_running() {
     let server = TmuxServer::start(1);
     let repo = Repo::new();
     launch_ok(&server, &repo, &implement("feat/r"));
+    let prompt = repo.worktree("feat-r").join(".agent-prompt");
+    wait_for("the agent to start in its worktree", || prompt.exists());
     let windows = server.window_ids().len();
 
     let output = resurrect(&server, &[]);
