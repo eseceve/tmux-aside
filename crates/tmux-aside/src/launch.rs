@@ -1067,7 +1067,7 @@ fn ref_exists(repository: &Path, name: &str) -> bool {
     git(repository, &["rev-parse", "--verify", "--quiet", name]).is_ok()
 }
 
-fn git(directory: &Path, args: &[&str]) -> Result<String> {
+pub(crate) fn git(directory: &Path, args: &[&str]) -> Result<String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(directory)

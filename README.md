@@ -80,6 +80,8 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 | `tmux-aside fix URL` | Launch an agent that fixes what QA found in a pull request, on a new branch in its repository and Group. |
 | `tmux-aside follow URL` | Run from an agent's pane: make that agent the one the [watcher](#watcher) follows and nudges for the pull request. |
 | `tmux-aside resurrect [--dry-run]` | Reopen the agent of every launch whose window is gone, such as after tmux or the computer restarted, resuming its latest conversation in its worktree. `--dry-run` only lists them. |
+| `tmux-aside remove [LAUNCH] [--force] [--keep-branch]` | Remove a launch, given by id, branch, pull request URL or worktree path (the launch of the current pane when none): its worktree and local branch, its record and its agent's pane. A launch that works in the clone, such as a QA launch, or that follows a pull request in someone else's worktree only loses its record and pane. It refuses a worktree with uncommitted changes or commits on no remote branch unless `--force`. Also takes the path of a worktree no launch follows. See [Cleaning up](#cleaning-up). |
+| `tmux-aside prune [PATH...] [--force] [--keep-branch] [--dry-run]` | Remove the worktrees in `<clone>__worktrees/` that no launch follows once they are done. See [Cleaning up](#cleaning-up). |
 | `tmux-aside status [--json]` | List every launch with its repository, branch, worktree, window, agent, template, task, pull request and the stage the watcher last saw it in, with what it is missing (`QA · waiting for QA`). |
 
 ## Launching agents
@@ -134,6 +136,12 @@ Install it with `tmux-aside setup --pack PATH_ZIP_OR_URL`, or answer the setup's
 Launches are recorded in `$XDG_STATE_HOME/tmux-aside/launches/`, so `tmux-aside status` still lists them after tmux or the computer restarts. Run `tmux-aside resurrect` then to reopen their agents: each one resumes its latest conversation in its worktree (`claude --continue`, `codex resume --last`, `agy --continue`) in a new window of its session.
 
 The [watcher](#watcher) section follows the pull request of every launch whose template opens one.
+
+### Cleaning up
+
+Once a launch's pull request is merged, the [watcher](#watcher) removes its worktree and closes its window by itself, but only when nothing would be lost; it keeps the local branch. Run `tmux-aside remove` for the rest: from the agent's window or with the launch's id, branch or pull request URL, after a merge whose worktree the watcher kept, or when a QA agent finished. A launch whose template opens no pull request, such as an investigation, is never cleaned up by itself.
+
+`tmux-aside prune` cleans up the worktrees in `<clone>__worktrees/` that no launch follows, such as those of a followed pull request after it left the watcher or those other tools created there. Give it clones, worktrees or a directory of clones (the current directory by default). It removes a worktree, its local branch and the panes working in it when a pull request of its branch was merged or closed at the worktree's commit and none is open, or when the remote branch it tracked is gone. One with uncommitted changes or commits on no remote branch is kept and reported unless `--force`. Run it with `--dry-run` first to see what it would remove.
 
 ## Using the sidebar
 

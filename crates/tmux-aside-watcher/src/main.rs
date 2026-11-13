@@ -11,9 +11,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use tmux_aside::config::{self, Criteria, CriterionCommand, DiscoverySource};
 use tmux_aside::i18n::Language;
 use tmux_aside::launch::{self, Launch, Progress};
-use tmux_aside::pack;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
 use tmux_aside::tmux;
+use tmux_aside::{cleanup, pack};
 use tmux_aside_agents::{AgentState, agents_dir, state_file};
 use tmux_aside_github::{PullRequest, parse_search, search_query};
 use tmux_aside_watcher::{
@@ -174,7 +174,7 @@ fn run(cli: Cli) -> Result<()> {
                     worktree: pull_request.as_ref().filter(|pr| pr.finished()).map(
                         |pr| match launch.keeps_worktree || launch.worktree == launch.repository {
                             true => Worktree::Main,
-                            false => inspect_worktree(&launch.worktree, pr.head.as_deref()),
+                            false => cleanup::inspect(&launch.worktree, pr.head.as_deref()),
                         },
                     ),
                     answers: answers.get(&launch.id).cloned().unwrap_or_default(),
@@ -805,70 +805,16 @@ fn live_agent(pane: &str) -> Option<(AgentState, LivePane)> {
     Some((state, live))
 }
 
-/// What removing `worktree` would lose. Commits are pushed when the branch is at the pull
-/// request's `head` or when a remote branch holds them.
-fn inspect_worktree(worktree: &Path, head: Option<&str>) -> Worktree {
-    let git = |args: &[&str]| git_output(worktree, args);
-    if !worktree.exists() {
-        return Worktree::Missing;
-    }
-    let Some(changes) = git(&["status", "--porcelain"]) else {
-        return Worktree::Missing;
-    };
-    if !changes.is_empty() {
-        return Worktree::Uncommitted;
-    }
-    if head.is_some() && git(&["rev-parse", "HEAD"]).as_deref() == head {
-        return Worktree::Clean;
-    }
-    match git(&["rev-list", "--count", "HEAD", "--not", "--remotes"]).as_deref() {
-        Some("0") => Worktree::Clean,
-        _ => Worktree::Unpushed,
-    }
-}
-
 /// Removes the Launch's worktree, then closes the agent's pane when it is still the one
-/// launched there, which closes its window unless someone split it. Returns whether the worktree was removed; failures go to stderr.
+/// launched there, which closes its window unless someone split it. Returns whether the worktree
+/// was removed; failures go to stderr.
 fn clean_up(launch: &Launch) -> bool {
-    let worktree = launch
-        .worktree
-        .canonicalize()
-        .unwrap_or_else(|_| launch.worktree.clone());
-    let agent_still_there = tmux::run(&[
-        "display-message",
-        "-p",
-        "-t",
-        &launch.pane,
-        "#{window_id}\t#{pane_current_path}",
-    ])
-    .ok()
-    .and_then(|live| {
-        let (window, path) = live.split_once('\t')?;
-        Some(window == launch.window && Path::new(path).starts_with(&worktree))
-    })
-    .unwrap_or(false);
-    let removed = Command::new("git")
-        .arg("-C")
-        .arg(&launch.repository)
-        .args(["worktree", "remove"])
-        .arg(&launch.worktree)
-        .output();
-    match removed {
-        Ok(output) if output.status.success() => {}
-        Ok(output) => {
-            eprintln!(
-                "failed to remove {}: {}",
-                launch.worktree.display(),
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-            return false;
-        }
-        Err(error) => {
-            eprintln!("failed to remove {}: {error}", launch.worktree.display());
-            return false;
-        }
+    let agent = cleanup::agent_still_there(launch);
+    if let Err(error) = cleanup::remove_worktree(&launch.repository, &launch.worktree, false) {
+        eprintln!("failed to remove {}: {error:#}", launch.worktree.display());
+        return false;
     }
-    if agent_still_there && let Err(error) = tmux::run(&["kill-pane", "-t", &launch.pane]) {
+    if agent && let Err(error) = tmux::run(&["kill-pane", "-t", &launch.pane]) {
         eprintln!("failed to close {}: {error:#}", launch.pane);
     }
     true

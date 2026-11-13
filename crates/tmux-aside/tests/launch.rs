@@ -1,97 +1,13 @@
 mod common;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Output};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::TmuxServer;
-use common::daemon::{Home, fixture, wait_for};
+use common::daemon::{Home, wait_for};
+use common::repo::{Repo, git_in, implement, launch, launch_ok, launches_dir, with_fake_agent};
 use serde_json::Value;
 use tmux_aside::launch::Template;
-
-static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
-
-/// A clone of a local origin, with one local commit that origin does not have.
-struct Repo {
-    dir: PathBuf,
-}
-
-impl Repo {
-    fn new() -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "tmux-aside-repo-{}-{}",
-            std::process::id(),
-            NEXT_ID.fetch_add(1, Ordering::SeqCst)
-        ));
-        std::fs::create_dir_all(dir.join("origin")).unwrap();
-        let repo = Repo { dir };
-        git_in(&repo.origin(), &["init", "-q", "-b", "main"]);
-        git_in(
-            &repo.origin(),
-            &["commit", "-q", "--allow-empty", "-m", "first"],
-        );
-        git_in(&repo.dir, &["clone", "-q", "origin", "clone"]);
-        let origin = repo.origin();
-        git_in(
-            &repo.clone(),
-            &["remote", "set-url", "origin", "git@github.com:org/shop.git"],
-        );
-        git_in(
-            &repo.clone(),
-            &[
-                "config",
-                &format!("url.{}.insteadOf", origin.display()),
-                "git@github.com:org/shop.git",
-            ],
-        );
-        git_in(
-            &repo.clone(),
-            &["commit", "-q", "--allow-empty", "-m", "local"],
-        );
-        repo
-    }
-
-    fn origin(&self) -> PathBuf {
-        self.dir.join("origin")
-    }
-
-    fn clone(&self) -> PathBuf {
-        self.dir.join("clone")
-    }
-
-    fn worktree(&self, handle: &str) -> PathBuf {
-        self.dir.join("clone__worktrees").join(handle)
-    }
-}
-
-impl Drop for Repo {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
-fn git_in(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .current_dir(dir)
-        .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
-}
-
-fn with_fake_agent(command: &mut Command) -> &mut Command {
-    let path = std::env::var("PATH").unwrap_or_default();
-    command.env(
-        "PATH",
-        format!("{}:{}:{path}", fixture("agent"), fixture("gh")),
-    )
-}
 
 const PR_URL: &str = "https://github.com/org/shop/pull/7";
 
@@ -137,40 +53,6 @@ fn push_branch(repo: &Repo, branch: &str) -> String {
     let head = git_in(&repo.origin(), &["rev-parse", "HEAD"]);
     git_in(&repo.origin(), &["checkout", "-q", "main"]);
     head
-}
-
-fn launch(server: &TmuxServer, repo: &Repo, extra: &[&str]) -> Output {
-    let clone = repo.clone();
-    let mut args = vec!["launch", clone.to_str().unwrap()];
-    args.extend_from_slice(extra);
-    with_fake_agent(&mut server.aside_command(&args))
-        .output()
-        .unwrap()
-}
-
-fn launch_ok(server: &TmuxServer, repo: &Repo, extra: &[&str]) -> Output {
-    let output = launch(server, repo, extra);
-    assert!(
-        output.status.success(),
-        "launch failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
-}
-
-fn implement(branch: &str) -> Vec<&str> {
-    vec![
-        "--template",
-        "implement",
-        "--task",
-        "Add a dark theme",
-        "--branch",
-        branch,
-    ]
-}
-
-fn launches_dir(home: &Home) -> PathBuf {
-    home.path("state/tmux-aside/launches")
 }
 
 fn status_json(server: &TmuxServer) -> Vec<Value> {

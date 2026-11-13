@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use tmux_aside::i18n::Language;
 use tmux_aside::setup::{self, Action, Ai};
 use tmux_aside::width::Width;
-use tmux_aside::{daemon, launch, render, sidebar};
+use tmux_aside::{cleanup, daemon, launch, render, sidebar};
 
 #[derive(Parser)]
 #[command(version, about = "A tmux sidebar with pluggable sections")]
@@ -138,6 +138,33 @@ enum Command {
     /// computer restarted, resuming its conversation
     Resurrect {
         /// Only list the launches it would reopen
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Remove a launch: its worktree and local branch, its record and its agent's pane
+    Remove {
+        /// Id, branch, pull request URL or worktree path of the launch, or the path of a worktree no
+        /// launch follows [default: the launch of the current pane]
+        launch: Option<String>,
+        /// Remove the worktree even with uncommitted changes or unpushed commits
+        #[arg(long)]
+        force: bool,
+        /// Keep the local branch
+        #[arg(long)]
+        keep_branch: bool,
+    },
+    /// Remove the worktrees next to these clones that no launch follows, once their pull
+    /// request was merged or closed or their remote branch is gone
+    Prune {
+        /// Clones, worktrees or directories of clones [default: the current directory]
+        paths: Vec<PathBuf>,
+        /// Remove worktrees even with uncommitted changes or unpushed commits
+        #[arg(long)]
+        force: bool,
+        /// Keep the local branches
+        #[arg(long)]
+        keep_branch: bool,
+        /// Only list the worktrees it would remove
         #[arg(long)]
         dry_run: bool,
     },
@@ -301,6 +328,31 @@ fn main() -> Result<()> {
         }
         Command::Resurrect { dry_run } => {
             println!("{}", launch::resurrect(dry_run, Language::detect())?);
+            Ok(())
+        }
+        Command::Remove {
+            launch,
+            force,
+            keep_branch,
+        } => {
+            let options = cleanup::Options { force, keep_branch };
+            println!(
+                "{}",
+                cleanup::remove(launch.as_deref(), options, Language::detect())?
+            );
+            Ok(())
+        }
+        Command::Prune {
+            paths,
+            force,
+            keep_branch,
+            dry_run,
+        } => {
+            let options = cleanup::Options { force, keep_branch };
+            println!(
+                "{}",
+                cleanup::prune(&paths, options, dry_run, Language::detect())?
+            );
             Ok(())
         }
         Command::Status { json } => {

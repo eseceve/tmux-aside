@@ -515,21 +515,7 @@ pub struct Followed {
 /// reason a Criterion failed.
 pub type Answers = Vec<(Stage, Result<Answer, String>)>;
 
-/// What removing a Launch's worktree would lose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Worktree {
-    /// Not a git worktree any more, such as after it was removed.
-    Missing,
-    /// A worktree that is not tmux-aside's, such as the clone itself or the one of a followed or
-    /// discovered pull request; never removed.
-    Main,
-    /// Nothing would be lost. Seen after a cleanup, it means the removal failed.
-    Clean,
-    /// Files changed and not committed.
-    Uncommitted,
-    /// Commits on no remote branch and not the pull request's head.
-    Unpushed,
-}
+pub use tmux_aside::cleanup::Worktree;
 
 /// Whether `followed` leaves the Watcher: its pull request was deployed or closed, and its
 /// worktree removed or never its own.

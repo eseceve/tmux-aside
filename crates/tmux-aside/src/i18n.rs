@@ -216,6 +216,16 @@ pub struct Messages {
     pub pull_request: &'static str,
     pub pull_request_pending: &'static str,
     pub no_pull_request: &'static str,
+    pub removed: fn(&str) -> String,
+    pub would_remove: fn(&str) -> String,
+    pub kept_uncommitted: fn(&str) -> String,
+    pub kept_unpushed: fn(&str) -> String,
+    pub github_failed: fn(&str, &str) -> String,
+    pub branch_not_deleted: fn(&str, &str) -> String,
+    pub nothing_to_prune: &'static str,
+    pub unknown_launch: fn(&str) -> String,
+    pub ambiguous_launch: fn(&str, &str) -> String,
+    pub not_a_launch_pane: &'static str,
 }
 
 const EN: Messages = Messages {
@@ -287,6 +297,20 @@ const EN: Messages = Messages {
     pull_request: "Pull request",
     pull_request_pending: "not opened yet",
     no_pull_request: "none, the template opens none",
+    removed: |what| format!("removed {what}"),
+    would_remove: |what| format!("would remove {what}"),
+    kept_uncommitted: |what| {
+        format!("kept {what}: it has uncommitted changes; --force removes it anyway")
+    },
+    kept_unpushed: |what| {
+        format!("kept {what}: it has commits on no remote branch; --force removes it anyway")
+    },
+    github_failed: |what, error| format!("kept {what}: could not ask GitHub: {error}"),
+    branch_not_deleted: |branch, error| format!("could not delete the branch {branch}: {error}"),
+    nothing_to_prune: "nothing to prune",
+    unknown_launch: |target| format!("no launch matches {target}"),
+    ambiguous_launch: |target, ids| format!("{target} matches several launches: {ids}"),
+    not_a_launch_pane: "run remove from a launch's pane, or give its id, branch or pull request",
 };
 
 const ES: Messages = Messages {
@@ -362,4 +386,22 @@ const ES: Messages = Messages {
     pull_request: "Pull request",
     pull_request_pending: "aún no abierto",
     no_pull_request: "ninguno, la plantilla no abre uno",
+    removed: |what| format!("{what} eliminado"),
+    would_remove: |what| format!("se eliminaría {what}"),
+    kept_uncommitted: |what| {
+        format!("se conserva {what}: tiene cambios sin commitear; --force lo elimina igual")
+    },
+    kept_unpushed: |what| {
+        format!(
+            "se conserva {what}: tiene commits en ninguna rama remota; --force lo elimina igual"
+        )
+    },
+    github_failed: |what, error| {
+        format!("se conserva {what}: no se pudo consultar a GitHub: {error}")
+    },
+    branch_not_deleted: |branch, error| format!("no se pudo borrar la rama {branch}: {error}"),
+    nothing_to_prune: "nada que limpiar",
+    unknown_launch: |target| format!("ningún lanzamiento coincide con {target}"),
+    ambiguous_launch: |target, ids| format!("{target} coincide con varios lanzamientos: {ids}"),
+    not_a_launch_pane: "ejecuta remove desde el panel de un lanzamiento, o indica su id, rama o pull request",
 };

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod daemon;
+pub mod repo;
 
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
