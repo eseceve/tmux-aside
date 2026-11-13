@@ -79,6 +79,7 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 | `tmux-aside deployed URL... [--task TEXT]...` | Run the [`on_deployed` action](#watcher) for deployed pull requests, in the current directory. The watcher runs it by itself. |
 | `tmux-aside fix URL` | Launch an agent that fixes what QA found in a pull request, on a new branch in its repository and Group. |
 | `tmux-aside follow URL` | Run from an agent's pane: make that agent the one the [watcher](#watcher) follows and nudges for the pull request. |
+| `tmux-aside resurrect [--dry-run]` | Reopen the agent of every launch whose window is gone, such as after tmux or the computer restarted, resuming its latest conversation in its worktree. `--dry-run` only lists them. |
 | `tmux-aside status [--json]` | List every launch with its repository, branch, worktree, window, agent, template, task, pull request and the stage the watcher last saw it in, with what it is missing (`QA · waiting for QA`). |
 
 ## Launching agents
@@ -125,7 +126,7 @@ on_deployed:                  # what the watcher does once pull requests are dep
 
 Install it with `tmux-aside setup --pack PATH_OR_URL`, or answer the setup's question. A path is used in place, so you can develop a Pack without copying it. A git URL is cloned once, with your own git credentials, into `$XDG_DATA_HOME/tmux-aside/packs/` (`~/.local/share/tmux-aside/packs/` by default); running the command again pulls it fast-forward only, and nothing updates it on its own. Either way setup only writes `pack:` in the config. Templates resolve by name from your own folder, then the Pack's, then the bundled ones, Criteria from the config's `criteria:`, then the Pack's, then the defaults, and `on_deployed` from the config's, then the Pack's. tmux-aside reads only the manifest and runs only what it declares; an invalid manifest is reported and the defaults are used.
 
-Launches are recorded in `$XDG_STATE_HOME/tmux-aside/launches/`, so `tmux-aside status` still lists them after tmux or the computer restarts.
+Launches are recorded in `$XDG_STATE_HOME/tmux-aside/launches/`, so `tmux-aside status` still lists them after tmux or the computer restarts. Run `tmux-aside resurrect` then to reopen their agents: each one resumes its latest conversation in its worktree (`claude --continue`, `codex resume --last`, `agy --continue`) in a new window of its session.
 
 The [watcher](#watcher) section follows the pull request of every launch whose template opens one.
 

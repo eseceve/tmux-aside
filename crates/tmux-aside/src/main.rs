@@ -133,6 +133,13 @@ enum Command {
         /// URL of the pull request
         url: String,
     },
+    /// Reopen the agent of every launch whose window is gone, such as after tmux or the
+    /// computer restarted, resuming its conversation
+    Resurrect {
+        /// Only list the launches it would reopen
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// List every launch with its worktree, window, agent and pull request
     Status {
         /// Print JSON instead of text
@@ -145,7 +152,7 @@ enum Command {
         ai: AiArg,
         #[arg(long)]
         program: PathBuf,
-        prompt: PathBuf,
+        prompt: Option<PathBuf>,
     },
     #[command(name = "_sync", hide = true)]
     Sync {
@@ -291,6 +298,10 @@ fn main() -> Result<()> {
             println!("{}", launch::announce_followed(&launch, language));
             Ok(())
         }
+        Command::Resurrect { dry_run } => {
+            println!("{}", launch::resurrect(dry_run, Language::detect())?);
+            Ok(())
+        }
         Command::Status { json } => {
             let launches = launch::list()?;
             let progress = launch::progress();
@@ -308,7 +319,7 @@ fn main() -> Result<()> {
             ai,
             program,
             prompt,
-        } => launch::start_agent(ai.into(), &program, &prompt),
+        } => launch::start_agent(ai.into(), &program, prompt.as_deref()),
         Command::Sync { window } => sidebar::sync_window(&window),
         Command::Reap => sidebar::reap(),
         Command::Select { window, fallback } => sidebar::select(&window, &fallback),

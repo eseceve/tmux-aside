@@ -882,6 +882,77 @@ fn deployed_without_its_template_fails() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("unknown template: deployed"));
 }
 
+/// A launch of `feat/r` whose agent started, then lost its window as in a crash.
+fn crashed_launch(server: &TmuxServer, repo: &Repo) -> (Value, PathBuf) {
+    launch_ok(server, repo, &implement("feat/r"));
+    let prompt = repo.worktree("feat-r").join(".agent-prompt");
+    wait_for("the agent to start", || prompt.exists());
+    let launch = status_json(server).remove(0);
+    server.tmux(&["kill-window", "-t", launch["window"].as_str().unwrap()]);
+    std::fs::remove_file(&prompt).unwrap();
+    (launch, prompt)
+}
+
+fn resurrect(server: &TmuxServer, extra: &[&str]) -> Output {
+    let mut command = server.aside_command(&[&["resurrect"], extra].concat());
+    with_fake_agent(&mut command);
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+#[test]
+fn resurrect_reopens_a_launch_whose_window_is_gone_and_resumes_its_conversation() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let (before, prompt) = crashed_launch(&server, &repo);
+    let windows = server.window_ids().len();
+
+    let output = resurrect(&server, &[]);
+
+    assert!(String::from_utf8_lossy(&output.stdout).contains("reopened clone__feat-r"));
+    assert_eq!(server.window_ids().len(), windows + 1);
+    wait_for("the agent to resume", || prompt.exists());
+    assert_eq!(std::fs::read_to_string(&prompt).unwrap(), "--continue");
+    let after = status_json(&server).remove(0);
+    assert_ne!(after["pane"], before["pane"]);
+    assert!(
+        server
+            .window_ids()
+            .contains(&after["window"].as_str().unwrap().to_string())
+    );
+}
+
+#[test]
+fn resurrect_dry_run_lists_what_it_would_reopen_and_opens_nothing() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    crashed_launch(&server, &repo);
+    let windows = server.window_ids().len();
+
+    let output = resurrect(&server, &["--dry-run"]);
+
+    assert!(String::from_utf8_lossy(&output.stdout).contains("would reopen clone__feat-r"));
+    assert_eq!(server.window_ids().len(), windows);
+}
+
+#[test]
+fn resurrect_leaves_a_launch_whose_agent_is_still_running() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    launch_ok(&server, &repo, &implement("feat/r"));
+    let windows = server.window_ids().len();
+
+    let output = resurrect(&server, &[]);
+
+    assert!(String::from_utf8_lossy(&output.stdout).contains("nothing to reopen"));
+    assert_eq!(server.window_ids().len(), windows);
+}
+
 #[test]
 fn launch_records_the_group() {
     let server = TmuxServer::start(1);

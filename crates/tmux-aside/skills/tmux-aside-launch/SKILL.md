@@ -1,6 +1,6 @@
 ---
 name: tmux-aside-launch
-description: Launches AI agents on tasks with tmux-aside, each in its own branch, worktree and tmux window, and reports where launched work stands. Use when the user asks to launch, start, kick off or parallelize work on one or more tasks, issues, tickets or pull requests ("lanzá estas tareas", "start an agent on issue 12 in the api repo", "take over this PR"), to put launches in a group, or asks what launched agents and pull requests are doing.
+description: Launches AI agents on tasks with tmux-aside, each in its own branch, worktree and tmux window, and reports where launched work stands. Use when the user asks to launch, start, kick off or parallelize work on one or more tasks, issues, tickets or pull requests ("lanzá estas tareas", "start an agent on issue 12 in the api repo", "take over this PR"), to put launches in a group, asks what launched agents and pull requests are doing, or wants their agents back after tmux or the computer restarted ("resucitá los agentes", "reabrí las ventanas de las tareas").
 ---
 
 # tmux-aside-launch
@@ -12,6 +12,7 @@ Turn the request into `tmux-aside` commands. Hold no logic of your own: tmux-asi
 - `tmux-aside status --json`: every launch with its repository, branch, worktree, window, AI (`ai`), template, task reference, group and pull request. Read it first when the user asks how things stand, or to avoid launching twice.
 - `tmux-aside launch <repo> --template <name> --task <reference> --branch <branch> [--group <name>]`: a new branch from the remote's default branch.
 - `tmux-aside launch <repo> --template adopt --pr <url> [--group <name>]`: take over an existing pull request.
+- `tmux-aside resurrect [--dry-run]`: reopen the agent of every launch whose window is gone, resuming its conversation. Run it with `--dry-run` first and show the list.
 
 ## Choosing
 

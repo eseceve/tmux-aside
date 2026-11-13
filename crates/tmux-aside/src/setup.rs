@@ -121,6 +121,14 @@ impl Ai {
         }
     }
 
+    /// The arguments that resume the AI's latest conversation in the current directory.
+    pub fn resume_arguments(self) -> Vec<String> {
+        match self {
+            Ai::Claude | Ai::Agy => vec!["--continue".to_string()],
+            Ai::Codex => vec!["resume".to_string(), "--last".to_string()],
+        }
+    }
+
     /// The arguments that run the AI headless on `prompt` and exit once it answered.
     pub fn print_arguments(self, prompt: &str) -> Vec<String> {
         let flag = match self {
