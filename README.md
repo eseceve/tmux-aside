@@ -25,7 +25,7 @@ To see it with fake data, without touching your tmux, run `examples/demo/run.sh`
 ## Requirements
 
 - tmux 3.0 or newer (developed against tmux 3.6).
-- Rust 1.88 or newer, to build it.
+- Rust 1.89 or newer, to build it.
 - Per plugin:
   - `github`: the [GitHub CLI](https://cli.github.com), logged in (`gh auth login`).
   - `agents`: [Claude Code](https://code.claude.com) for hook-reported status; any other agent CLI can be detected by its command.

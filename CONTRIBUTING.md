@@ -4,7 +4,7 @@ Thanks for helping! Bug reports, ideas and pull requests are welcome. For a larg
 
 ## Setup
 
-The commands, the crate layout and the conventions are in [AGENTS.md](AGENTS.md), which coding agents also read. You need Rust 1.88 or newer and tmux 3.0 or newer.
+The commands, the crate layout and the conventions are in [AGENTS.md](AGENTS.md), which coding agents also read. You need Rust 1.89 or newer and tmux 3.0 or newer.
 
 ## Trying a change
 

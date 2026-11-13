@@ -4,7 +4,7 @@ tmux-aside is a tmux sidebar built from plugin sections, written in Rust as a Ca
 
 ## Commands
 
-You need Rust 1.88 or newer and tmux 3.0 or newer.
+You need Rust 1.89 or newer and tmux 3.0 or newer.
 
 ```sh
 cargo build
