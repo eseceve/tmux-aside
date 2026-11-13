@@ -17,9 +17,11 @@ const DEFAULT_SESSION: &str = "tmux-aside";
 const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
     ("adopt", include_str!("../templates/adopt.md")),
     ("implement", include_str!("../templates/implement.md")),
+    (FIX_TEMPLATE, include_str!("../templates/fix.md")),
     (QA_TEMPLATE, include_str!("../templates/qa.md")),
 ];
 const QA_TEMPLATE: &str = "qa";
+const FIX_TEMPLATE: &str = "fix";
 
 /// The prompt an agent is launched with, into which the Task reference is filled.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -438,6 +440,53 @@ pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
         auto_qa: None,
     };
     write(&directory.join(format!("{}.json", launch.id)), &launch)?;
+    Ok(launch)
+}
+
+/// Launches an agent that fixes what the QA of the pull request at `url` found, with the `fix`
+/// Template, in a new branch of the same repository and in the same Group, so that QA reruns
+/// for both once the fix reaches QA. A pull request without a Group gets one, named after its
+/// Launch. The Task reference points the agent to the QA report.
+pub fn fix(url: &str, language: Language) -> Result<Launch> {
+    let messages = language.messages();
+    let original = list()?
+        .into_iter()
+        .find(|launch| launch.pull_request.as_deref() == Some(url))
+        .ok_or_else(|| anyhow!((messages.not_followed)(url)))?;
+    let group = original
+        .group
+        .clone()
+        .unwrap_or_else(|| original.id.clone());
+    let number = pull_request_number(url);
+    let branch = (1..)
+        .map(|attempt| match attempt {
+            1 => format!("fix/qa-{number}"),
+            _ => format!("fix/qa-{number}-{attempt}"),
+        })
+        .find(|branch| {
+            ["refs/heads", "refs/remotes/origin"]
+                .iter()
+                .all(|refs| !ref_exists(&original.repository, &format!("{refs}/{branch}")))
+        })
+        .expect("an unused branch name");
+    let launch = run(
+        Options {
+            repository: original.repository,
+            template: FIX_TEMPLATE.to_string(),
+            task: Some(format!(
+                "the QA of {url} failed; its report is the latest QA comment on it"
+            )),
+            source: Source::Branch {
+                name: branch,
+                base: None,
+            },
+            group: Some(group.clone()),
+        },
+        language,
+    )?;
+    if original.group.is_none() {
+        update(&original.id, |launch| launch.group = Some(group))?;
+    }
     Ok(launch)
 }
 

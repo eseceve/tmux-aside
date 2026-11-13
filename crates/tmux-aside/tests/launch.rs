@@ -817,3 +817,61 @@ fn launch_records_the_group() {
 
     assert_eq!(status_json(&server)[0]["group"], "theme");
 }
+
+#[test]
+fn fix_launches_an_agent_on_a_new_branch_in_the_same_group() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let pane = agent_in_worktree(&server, &repo, "feat/f");
+    assert!(follow(&server, &repo, &pane, "feat/f").status.success());
+
+    let mut command = server.aside_command(&["fix", PR_URL]);
+    with_fake_agent(&mut command);
+    let output = command.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let launches = status_json(&server);
+    let original = launches
+        .iter()
+        .find(|launch| launch["branch"] == "feat/f")
+        .unwrap();
+    let fix = launches
+        .iter()
+        .find(|launch| launch["branch"] == "fix/qa-7")
+        .unwrap();
+    assert_eq!(original["group"], "clone__feat-f");
+    assert_eq!(fix["group"], "clone__feat-f");
+    assert_eq!(fix["template"], "fix");
+    let prompt = repo.worktree("fix-qa-7").join(".agent-prompt");
+    wait_for("the fix agent to start", || prompt.exists());
+    let prompt = std::fs::read_to_string(prompt).unwrap();
+    assert!(
+        prompt.contains(&format!("the QA of {PR_URL} failed")),
+        "{prompt}"
+    );
+}
+
+#[test]
+fn a_second_fix_gets_a_branch_of_its_own() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let pane = agent_in_worktree(&server, &repo, "feat/f");
+    assert!(follow(&server, &repo, &pane, "feat/f").status.success());
+
+    for _ in 0..2 {
+        let mut command = server.aside_command(&["fix", PR_URL]);
+        with_fake_agent(&mut command);
+        assert!(command.output().unwrap().status.success());
+    }
+
+    let branches: Vec<String> = status_json(&server)
+        .iter()
+        .map(|launch| launch["branch"].as_str().unwrap().to_string())
+        .collect();
+    assert!(branches.contains(&"fix/qa-7".to_string()), "{branches:?}");
+    assert!(branches.contains(&"fix/qa-7-2".to_string()), "{branches:?}");
+}

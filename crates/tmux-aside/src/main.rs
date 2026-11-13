@@ -92,6 +92,11 @@ enum Command {
         #[arg(required = true)]
         urls: Vec<String>,
     },
+    /// Launch an agent that fixes what QA found in a pull request, in its repository and Group
+    Fix {
+        /// URL of the pull request whose QA failed, followed by a launch
+        url: String,
+    },
     /// Record the AI agent in this pane as the agent of a pull request, so it gets its Nudges
     Follow {
         /// URL of the pull request
@@ -217,6 +222,12 @@ fn main() -> Result<()> {
         Command::Qa { urls } => {
             let language = Language::detect();
             let launch = launch::qa(&urls, language)?;
+            println!("{}", launch::announce(&launch, language));
+            Ok(())
+        }
+        Command::Fix { url } => {
+            let language = Language::detect();
+            let launch = launch::fix(&url, language)?;
             println!("{}", launch::announce(&launch, language));
             Ok(())
         }

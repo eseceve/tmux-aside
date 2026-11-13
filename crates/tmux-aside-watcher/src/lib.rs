@@ -28,6 +28,7 @@ pub struct Messages {
     waiting_to_be_deployed: &'static str,
     in_production: &'static str,
     launch_qa: &'static str,
+    launch_fix: &'static str,
     qa_waits_for: fn(&str) -> String,
     worktree_removed: &'static str,
     removal_failed: &'static str,
@@ -73,6 +74,7 @@ const EN: Messages = Messages {
     waiting_to_be_deployed: "waiting to be deployed",
     in_production: "in production",
     launch_qa: "launch QA",
+    launch_fix: "launch a fix for what QA found",
     qa_waits_for: |missing| format!("waiting for {missing}"),
     worktree_removed: "worktree removed",
     removal_failed: "the worktree could not be removed",
@@ -113,6 +115,7 @@ const ES: Messages = Messages {
     waiting_to_be_deployed: "esperando el despliegue",
     in_production: "en producción",
     launch_qa: "lanzar QA",
+    launch_fix: "lanzar un fix de lo que encontró QA",
     qa_waits_for: |missing| format!("esperando a {missing}"),
     worktree_removed: "worktree eliminado",
     removal_failed: "no se pudo eliminar el worktree",
@@ -524,6 +527,15 @@ pub fn should_clean_up(followed: &Followed) -> bool {
         && followed.worktree == Some(Worktree::Clean)
 }
 
+/// Whether QA failed for `followed`: its Ready to deploy Criterion answered unmet in red, as
+/// the default one does on the QA failed label.
+pub fn qa_failed(followed: &Followed) -> bool {
+    matches!(
+        followed.answers.last(),
+        Some((Stage::ReadyToDeploy, Ok(answer))) if !answer.met && answer.tone == Some(Tone::Danger)
+    )
+}
+
 /// The key of the Group of `launch`: its Group's name, or its own id when it has none.
 pub fn group_key(launch: &Launch) -> String {
     launch
@@ -610,7 +622,8 @@ pub fn due_for_qa(followed: &[Followed], language: Language) -> Vec<(Vec<String>
 /// One row per followed Launch, the rows of a Group together under its name (a Launch
 /// without one under its repository's). Enter jumps to the agent's pane; `p` opens the pull
 /// request in the browser; `q`, once its Group is ready for QA, launches one QA agent for
-/// the whole Group with `tmux_aside`, the path to the `tmux-aside` command.
+/// the whole Group, and `f`, once QA failed, launches a fix in the same Group, both with
+/// `tmux_aside`, the path to the `tmux-aside` command.
 pub fn rows(all: &[Followed], tmux_aside: &str, language: Language) -> Vec<Row> {
     let messages = messages(language);
     let label = |launch: &Launch| {
@@ -658,8 +671,18 @@ pub fn rows(all: &[Followed], tmux_aside: &str, language: Language) -> Vec<Row> 
                         label: Some(messages.launch_qa.to_string()),
                         ..Action::new("q", &command)
                     });
-                } else if !qa.waiting_for.is_empty() && evaluation.tone != Tone::Danger {
-                    evaluation.summary = (messages.qa_waits_for)(&qa.waiting_for.join(", "));
+                } else if !qa.waiting_for.is_empty() {
+                    let waiting = (messages.qa_waits_for)(&qa.waiting_for.join(", "));
+                    evaluation.summary = match qa_failed(followed) {
+                        true => format!("{} · {waiting}", evaluation.summary),
+                        false => waiting,
+                    };
+                }
+                if let (true, Some(pr)) = (qa_failed(followed), &followed.pull_request) {
+                    actions.push(Action {
+                        label: Some(messages.launch_fix.to_string()),
+                        ..Action::new("f", &[tmux_aside, "fix", &pr.url])
+                    });
                 }
             }
             row.detail_tone = evaluation.tone;

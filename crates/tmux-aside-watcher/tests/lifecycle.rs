@@ -822,3 +822,78 @@ fn qa_is_not_due_again_when_a_member_leaves_the_group() {
 
     assert!(due_for_qa(&followed, Language::En).is_empty());
 }
+
+fn failed_pr(number: u64) -> Value {
+    node(json!({
+        "state": "MERGED",
+        "number": number,
+        "url": format!("https://github.com/org/shop/pull/{number}"),
+        "labels": {"nodes": [{"name": "qa:failed"}]},
+    }))
+}
+
+#[test]
+fn a_failed_qa_shows_in_red_and_offers_a_fix() {
+    let followed = [member("feat/a", None, "shop", Some(failed_pr(1)))];
+
+    let rows = rows(&followed, "tmux-aside", Language::En);
+
+    assert_eq!(rows[0].lines, ["QA · QA failed"]);
+    assert_eq!(rows[0].bar_tone, Tone::Danger);
+    assert_eq!(
+        rows[0].action("f").unwrap(),
+        ["tmux-aside", "fix", "https://github.com/org/shop/pull/1"]
+    );
+}
+
+#[test]
+fn qa_is_offered_again_only_once_the_fix_reached_qa_too() {
+    let mut followed = vec![
+        member("feat/a", Some("theme"), "shop", Some(failed_pr(1))),
+        member(
+            "fix/qa-1",
+            Some("theme"),
+            "shop",
+            Some(node(json!({"number": 2}))),
+        ),
+    ];
+
+    let rows_before = rows(&followed, "tmux-aside", Language::En);
+    let failed = rows_before
+        .iter()
+        .find(|row| row.detail.as_deref() == Some("#1"))
+        .unwrap();
+    assert_eq!(failed.lines, ["QA · QA failed · waiting for #2"]);
+    assert!(failed.action("q").is_none());
+
+    followed[1] = member("fix/qa-1", Some("theme"), "shop", Some(merged_pr(2)));
+    let rows_after = rows(&followed, "tmux-aside", Language::En);
+    let failed = rows_after
+        .iter()
+        .find(|row| row.detail.as_deref() == Some("#1"))
+        .unwrap();
+    assert_eq!(
+        failed.action("q").unwrap(),
+        [
+            "tmux-aside",
+            "qa",
+            "https://github.com/org/shop/pull/1",
+            "https://github.com/org/shop/pull/2",
+        ]
+    );
+}
+
+#[test]
+fn a_failing_criterion_in_qa_offers_no_fix() {
+    let mut followed = member("feat/a", None, "shop", Some(merged_pr(1)));
+    followed.answers.pop();
+    followed.answers.push((
+        Stage::ReadyToDeploy,
+        Err("exited with status 1".to_string()),
+    ));
+
+    let rows = rows(&[followed], "tmux-aside", Language::En);
+
+    assert_eq!(rows[0].bar_tone, Tone::Danger);
+    assert!(rows[0].action("f").is_none());
+}

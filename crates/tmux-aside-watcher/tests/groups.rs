@@ -82,3 +82,44 @@ fn without_automatic_qa_nothing_is_launched_by_itself() {
     assert!(launched_qa(&scratch).is_empty());
     assert_eq!(rows[0].group.as_deref(), Some("theme"));
 }
+
+#[test]
+fn qa_reruns_for_a_failed_pull_request_and_its_fix_once_the_fix_reached_qa() {
+    let (scratch, fake) = ready_group();
+    scratch.configure("auto_qa: true\n");
+    let pull_request = |number: u64, changes: serde_json::Value| {
+        let mut node = node(json!({
+            "number": number,
+            "url": format!("https://github.com/org/shop/pull/{number}"),
+        }));
+        for (key, value) in changes.as_object().unwrap() {
+            node[key] = value.clone();
+        }
+        node
+    };
+    let failed = pull_request(
+        1,
+        json!({"state": "MERGED", "labels": {"nodes": [{"name": "qa:failed"}]}}),
+    );
+    scratch.respond(found(&[
+        Some(failed.clone()),
+        Some(pull_request(2, json!({}))),
+    ]));
+    let plugin = scratch.start_with(&["--interval", "200ms", "--tmux-aside", &fake], None);
+    plugin.rows_where("the failed QA waiting for the fix", |rows| {
+        rows.iter()
+            .any(|row| row.lines == ["QA · QA failed · waiting for #2"])
+    });
+    assert!(launched_qa(&scratch).is_empty());
+
+    scratch.respond(found(&[
+        Some(failed),
+        Some(pull_request(2, json!({"state": "MERGED"}))),
+    ]));
+
+    wait_until("the QA rerun", || !launched_qa(&scratch).is_empty());
+    assert_eq!(
+        launched_qa(&scratch),
+        ["qa https://github.com/org/shop/pull/1 https://github.com/org/shop/pull/2"]
+    );
+}
