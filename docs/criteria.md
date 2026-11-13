@@ -21,7 +21,7 @@ The stages are `ready_to_merge`, `qa`, `ready_to_deploy` and `deployed`. Without
 | `ready_to_deploy` | It carries the `--passed-label` (`qa:passed`); the `--failed-label` (`qa:failed`) shows that QA failed. |
 | `deployed` | Always: without a Criterion that knows the deploy pipeline, a change counts as deployed as soon as it is Ready to deploy. |
 
-A pull request whose Deployed Criterion is met leaves the watcher, and so does a closed one, once its worktree is removed.
+A pull request whose Deployed Criterion is met leaves the watcher, and so does a closed one, once its worktree is removed. Before it leaves, a deployed pull request runs the [`on_deployed` action](../README.md#watcher), when the config or the Pack sets one.
 
 ## The contract
 

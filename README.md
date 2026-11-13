@@ -43,7 +43,7 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 
 ## Quick start
 
-1. Copy the [example config](examples/config.yaml) to `~/.config/tmux-aside/config.yaml` (or `$XDG_CONFIG_HOME/tmux-aside/config.yaml`) and edit it.
+1. Copy the [example config](examples/config.yaml) to `~/.config/tmux-aside/config.yaml` (or `$XDG_CONFIG_HOME/tmux-aside/config.yaml`) and edit it. If your team has a [Pack](#packs), skip this: `tmux-aside setup --pack` writes a config whose sidebar comes from the Pack.
 2. Bind the keys and let your AI agents report their status:
 
    ```sh
@@ -129,7 +129,7 @@ sections:                     # the team's default sidebar
   - plugin: bin/status        # a relative path runs a plugin inside the Pack
 ```
 
-Install it with `tmux-aside setup --pack PATH_OR_URL`, or answer the setup's question. A path is used in place, so you can develop a Pack without copying it. A git URL is cloned once, with your own git credentials, into `$XDG_DATA_HOME/tmux-aside/packs/` (`~/.local/share/tmux-aside/packs/` by default); running the command again pulls it fast-forward only, and nothing updates it on its own. Either way setup only writes `pack:` in the config. The manifest takes every key of the [config](#configuration) but `pack`, and the config wins over it: each key comes from the config when it sets it, even to `false`, else from the Pack, else from the default. `sections`, `discover` and `on_deployed` come whole from the first that sets them, so to change the Pack's sidebar you copy its `sections` into your config and edit them there; `theme` and `criteria` merge per color and per stage. Templates resolve by name from your own folder, then the Pack's, then the bundled ones. A relative `command` or `plugin` path in the manifest is relative to the Pack's folder. tmux-aside reads only the manifest and runs only what it declares; an invalid manifest is reported and the defaults are used.
+Install it with `tmux-aside setup --pack PATH_OR_URL`, or answer the setup's question. A path is used in place, so you can develop a Pack without copying it. A git URL is cloned once, with your own git credentials, into `$XDG_DATA_HOME/tmux-aside/packs/` (`~/.local/share/tmux-aside/packs/` by default); running the command again pulls it fast-forward only, and nothing updates it on its own. Either way setup only writes `pack:` in the config. The manifest takes every key of the [config](#configuration) but `pack`, and the config wins over it: each key comes from the config when it sets it, even to `false`, else from the Pack, else from the default. `sections`, `discover` and `on_deployed` come whole from the first that sets them, so to change the Pack's sidebar you copy its `sections` into your config and edit them there; `theme` and `criteria` merge per color and per stage. Templates resolve by name from your own folder, then the Pack's, then the bundled ones. A relative `command` or `plugin` path in the manifest is relative to the Pack's folder. tmux-aside reads only the manifest and runs only what it declares; an invalid manifest is reported and the defaults are used. A manifest with a key your tmux-aside does not know yet is invalid, so update tmux-aside before pulling a Pack that uses a new key. `auto_reload` watches only the config file: run `tmux-aside reload` after the Pack changes.
 
 Launches are recorded in `$XDG_STATE_HOME/tmux-aside/launches/`, so `tmux-aside status` still lists them after tmux or the computer restarts. Run `tmux-aside resurrect` then to reopen their agents: each one resumes its latest conversation in its worktree (`claude --continue`, `codex resume --last`, `agy --continue`) in a new window of its session.
 
@@ -149,6 +149,8 @@ The [watcher](#watcher) section follows the pull request of every launch whose t
 Folds are remembered across restarts. When the sections do not fit, the top ones scroll to keep the selection visible.
 
 ## Configuration
+
+A [Pack](#packs) can set any of these keys but `pack`; whatever your config sets wins over it.
 
 ```yaml
 theme:                 # colors: names (green, darkgray) or #rrggbb
