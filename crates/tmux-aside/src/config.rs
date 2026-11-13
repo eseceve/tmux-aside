@@ -55,6 +55,9 @@ pub struct SectionConfig {
     /// Starts folded unless the user unfolded it before.
     pub collapsed: bool,
     pub pin: Pin,
+    /// Runs the plugin without showing the section, for plugins that act rather than show,
+    /// such as the watcher's Nudges and cleanup.
+    pub hidden: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,6 +166,7 @@ struct RawSection {
     density: Option<Density>,
     collapsed: Option<bool>,
     pin: Option<Pin>,
+    hidden: Option<bool>,
 }
 
 /// Location of the config file: `$XDG_CONFIG_HOME/tmux-aside/config.yaml`, defaulting to `~/.config`.
@@ -254,6 +258,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
                 density: raw.density.unwrap_or_default(),
                 collapsed: raw.collapsed.unwrap_or(false),
                 pin: raw.pin.unwrap_or_default(),
+                hidden: raw.hidden.unwrap_or(false),
             })
         })
         .collect::<Result<_>>()?;

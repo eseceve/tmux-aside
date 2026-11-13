@@ -178,6 +178,7 @@ Each section accepts:
 | `group_gap` | `false` | Leave a blank line between groups. |
 | `max_height` | | Show at most this many rows and scroll the rest. |
 | `pin` | `top` | `bottom` stacks the section at the bottom of the sidebar. |
+| `hidden` | `false` | Run the plugin without showing the section, for a plugin that acts rather than shows, such as the [watcher](#watcher). |
 
 Plugin logs go to `$XDG_STATE_HOME/tmux-aside/` (`~/.local/state/tmux-aside/` by default).
 
@@ -220,7 +221,7 @@ Follows the pull request of every [launch](#launching-agents) whose template ope
 - **QA**: once merged, the change waits to be verified in a pre-production environment. The pull requests of a Group are verified together, once every one reached QA; until then their rows say which ones QA waits for (`QA · waiting for #13`). Press `q` on a row of a ready Group, or run `tmux-aside qa URL...`, to launch one QA agent for all of them with the `qa` template; it records its verdict as the `qa:passed` or `qa:failed` label with a comment of the cases it tested. `qa:failed` turns the row red; press `f` on it, or run `tmux-aside fix URL`, to launch an agent with the `fix` template on a new branch (`fix/qa-12`), in the same Group, pointed at the QA report. QA then reruns for the pull request and its fix together, once the fix reaches QA.
 - **Ready to deploy → Deployed**: with the `qa:passed` label the change is ready to go to production, and by default it counts as deployed right away, so its row leaves. A Deployed Criterion of your own, one that knows your deploy pipeline, keeps the row at Ready to deploy until the change is in production.
 
-A closed pull request leaves too. Set `auto_qa: true` at the top of the config to have the watcher launch a Group's QA by itself once the Group is ready, once per set of pull requests; `q` and `tmux-aside qa` can repeat it either way. Runs with `mode: stream`:
+A closed pull request leaves too. To have the watcher nudge agents, clean up and run QA without its section taking room in the sidebar, add `hidden: true` to it: it keeps running, and `tmux-aside status` still lists every launch. Set `auto_qa: true` at the top of the config to have the watcher launch a Group's QA by itself once the Group is ready, once per set of pull requests; `q` and `tmux-aside qa` can repeat it either way. Runs with `mode: stream`:
 
 ```yaml
 - plugin: watcher

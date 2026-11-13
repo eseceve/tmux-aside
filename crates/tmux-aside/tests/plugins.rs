@@ -368,3 +368,44 @@ fn sections_wait_in_the_configured_language() {
 
     assert_eq!(row_texts(&view), ["cargando..."]);
 }
+
+#[test]
+fn a_hidden_section_runs_its_plugin_but_shows_nothing() {
+    let home = Home::new("plugins");
+    let counter = home.path("runs");
+    home.write_config(&config(&[
+        section(
+            &fixture("counter"),
+            &[counter.to_str().unwrap()],
+            "    interval: 100ms\n    hidden: true\n",
+        ),
+        section(&fixture("rows"), &["Shown", "1"], "    interval: 60s\n"),
+    ]));
+    let daemon = Daemon::start_in(home, 10_000);
+
+    let view = daemon.connect().view_where("the shown section", |view| {
+        view.sections[1]
+            .rows
+            .first()
+            .is_some_and(|row| row.text == "row 1")
+    });
+    wait_for("the hidden plugin to run twice", || lines_in(&counter) >= 2);
+
+    assert!(view.sections[0].rows.is_empty());
+    assert!(!view.sections[0].header);
+    let lines = tmux_aside::layout::layout(
+        &view,
+        &tmux_aside::layout::LayoutOptions {
+            width: 30,
+            height: 10,
+            spinner_frame: 0,
+            current_window: None,
+        },
+    );
+    let text: String = lines.iter().map(|line| line.text()).collect();
+    assert!(
+        !text.contains("Counter") && !text.contains("runs"),
+        "{text}"
+    );
+    assert!(text.contains("row 1"), "{text}");
+}

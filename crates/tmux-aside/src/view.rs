@@ -78,6 +78,9 @@ pub struct Section {
     pub pin: Pin,
     #[serde(default)]
     pub collapsed_groups: Vec<String>,
+    /// Shows nothing: its plugin runs, but its rows are dropped.
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 impl Section {
@@ -96,6 +99,7 @@ impl Section {
             density: Density::Compact,
             pin: Pin::Top,
             collapsed_groups: Vec::new(),
+            hidden: false,
         }
     }
 
@@ -291,7 +295,11 @@ impl View {
     /// Replaces a section's title and rows, keeping it inside the viewport, its collapsed
     /// groups limited to groups that still exist, and the selection on an existing line.
     pub fn set_section(&mut self, index: usize, title: &str, rows: Vec<Row>) {
-        let Some(section) = self.sections.get_mut(index) else {
+        let Some(section) = self
+            .sections
+            .get_mut(index)
+            .filter(|section| !section.hidden)
+        else {
             return;
         };
         section.title = title.to_string();

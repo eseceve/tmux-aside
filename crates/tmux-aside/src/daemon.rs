@@ -377,7 +377,8 @@ fn load() -> Loaded {
                 .sections
                 .iter()
                 .map(|section| Section {
-                    header: section.header,
+                    header: section.header && !section.hidden,
+                    hidden: section.hidden,
                     counts: section.counts,
                     group_gap: section.group_gap,
                     density: section.density,
@@ -393,7 +394,10 @@ fn load() -> Loaded {
                             .as_deref()
                             .map(|title| title::expand(title, language))
                             .unwrap_or_else(|| plugin::display_name(&section.plugin)),
-                        vec![Row::new(language.messages().loading)],
+                        match section.hidden {
+                            true => vec![],
+                            false => vec![Row::new(language.messages().loading)],
+                        },
                         section.max_height,
                     )
                 })

@@ -242,3 +242,14 @@ fn parses_the_criteria_that_replace_the_defaults() {
 fn an_unknown_stage_in_the_criteria_is_rejected() {
     assert!(parse("criteria:\n  merged:\n    command: /opt/x\n").is_err());
 }
+
+#[test]
+fn a_section_can_be_hidden() {
+    let config = parse(
+        "sections:\n  - plugin: watcher\n    mode: stream\n    hidden: true\n  - plugin: clock\n",
+    )
+    .unwrap();
+
+    assert!(config.sections[0].hidden);
+    assert!(!config.sections[1].hidden);
+}
