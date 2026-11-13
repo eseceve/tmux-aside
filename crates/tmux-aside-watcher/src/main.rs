@@ -440,6 +440,13 @@ fn fetch(launches: &[Launch], language: Language) -> Result<HashMap<String, Pull
     let targets: Vec<(&Launch, Target)> = launches
         .iter()
         .filter_map(|launch| {
+            if let Some(target) = launch
+                .pull_request
+                .as_deref()
+                .and_then(Target::pull_request)
+            {
+                return Some((launch, target));
+            }
             let (owner, name) = github_repository(&origin_url(&launch.repository)?)?;
             Some((launch, Target::new(&owner, &name, &launch.branch)))
         })
@@ -457,8 +464,10 @@ fn fetch(launches: &[Launch], language: Language) -> Result<HashMap<String, Pull
     command
         .args(["api", "graphql", "-f"])
         .arg(format!("query={query}"));
-    for (name, value) in variables {
-        command.arg("-f").arg(format!("{name}={value}"));
+    for (name, value, integer) in variables {
+        command
+            .arg(if integer { "-F" } else { "-f" })
+            .arg(format!("{name}={value}"));
     }
     let output = command
         .output()

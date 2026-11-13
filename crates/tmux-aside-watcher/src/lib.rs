@@ -726,6 +726,8 @@ pub struct Target {
     pub owner: String,
     pub name: String,
     pub branch: String,
+    /// The pull request itself, when it is known; its branch is then not searched.
+    pub number: Option<u64>,
 }
 
 impl Target {
@@ -735,28 +737,58 @@ impl Target {
             owner: owner.to_string(),
             name: name.to_string(),
             branch: branch.to_string(),
+            number: None,
         }
+    }
+
+    /// The pull request at `url`, or `None` when it is not a GitHub pull request URL.
+    pub fn pull_request(url: &str) -> Option<Self> {
+        let (repository, number) = url.split_once("/pull/")?;
+        let (owner, name) = github_repository(repository)?;
+        let number = number.split(['/', '#', '?']).next()?.parse().ok()?;
+        Some(Target {
+            number: Some(number),
+            ..Target::new(&owner, &name, "")
+        })
     }
 }
 
-/// One GraphQL query asking for the newest pull requests of every target, aliased `p0`, `p1`...
-/// in order, and its variables (`o0`, `n0`, `b0`...) as name and value.
-pub fn batch_query(targets: &[Target]) -> (String, Vec<(String, String)>) {
+/// A variable of [`batch_query`]: its name, its value and whether GraphQL takes it as an
+/// integer.
+pub type Variable = (String, String, bool);
+
+/// One GraphQL query asking, for every target in order (aliased `p0`, `p1`...), for the pull
+/// request it names or the newest pull requests of its branch, and its variables (`o0`, `n0`,
+/// then `m0` or `b0`...).
+pub fn batch_query(targets: &[Target]) -> (String, Vec<Variable>) {
     let mut declarations = Vec::new();
     let mut selections = Vec::new();
     let mut variables = Vec::new();
     for (index, target) in targets.iter().enumerate() {
-        declarations.push(format!(
-            "$o{index}: String!, $n{index}: String!, $b{index}: String!"
-        ));
-        selections.push(format!(
-            "p{index}: repository(owner: $o{index}, name: $n{index}) {{ pullRequests(headRefName: $b{index}, first: {CANDIDATES}, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ ...PullRequestFields }} }} }}"
-        ));
         variables.extend([
-            (format!("o{index}"), target.owner.clone()),
-            (format!("n{index}"), target.name.clone()),
-            (format!("b{index}"), target.branch.clone()),
+            (format!("o{index}"), target.owner.clone(), false),
+            (format!("n{index}"), target.name.clone(), false),
         ]);
+        match target.number {
+            Some(number) => {
+                declarations.push(format!(
+                    "$o{index}: String!, $n{index}: String!, $m{index}: Int!"
+                ));
+                selections.push(format!(
+                    "p{index}: repository(owner: $o{index}, name: $n{index}) {{ pullRequest(number: $m{index}) {{ ...PullRequestFields }} }}"
+                ));
+                variables.push((format!("m{index}"), number.to_string(), true));
+            }
+            None => {
+                declarations.push(format!(
+                    "$o{index}: String!, $n{index}: String!, $b{index}: String!"
+                ));
+                selections.push(format!(
+                    "p{index}: repository(owner: $o{index}, name: $n{index}) {{ pullRequests(headRefName: $b{index}, first: {CANDIDATES}, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ ...PullRequestFields }} }} }}"
+                ));
+                variables.push((format!("b{index}"), target.branch.clone(), false));
+            }
+        }
     }
     let query = format!(
         "query({}) {{ {} }} {PULL_REQUEST_FIELDS}",
@@ -782,13 +814,17 @@ pub fn parse_batch(output: &str, count: usize) -> Result<Vec<Vec<PullRequest>>> 
     }
     let data = data.ok_or_else(|| anyhow!("unexpected GitHub response"))?;
     Ok((0..count)
-        .map(|index| {
-            data.pointer(&format!("/p{index}/pullRequests/nodes"))
-                .and_then(Value::as_array)
-                .map_or_else(Vec::new, |nodes| {
-                    nodes.iter().filter_map(parse_pull_request).collect()
-                })
-        })
+        .map(
+            |index| match data.pointer(&format!("/p{index}/pullRequest")) {
+                Some(node) => parse_pull_request(node).into_iter().collect(),
+                None => data
+                    .pointer(&format!("/p{index}/pullRequests/nodes"))
+                    .and_then(Value::as_array)
+                    .map_or_else(Vec::new, |nodes| {
+                        nodes.iter().filter_map(parse_pull_request).collect()
+                    }),
+            },
+        )
         .collect())
 }
 

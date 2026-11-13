@@ -118,8 +118,33 @@ fn one_query_asks_for_the_newest_pull_request_of_every_branch() {
             ("n1", "api"),
             ("b1", "fix/b"),
         ]
-        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .map(|(name, value)| (name.to_string(), value.to_string(), false))
     );
+}
+
+#[test]
+fn a_known_pull_request_is_asked_for_by_number() {
+    let target = Target::pull_request("https://github.com/org/shop/pull/12/files").unwrap();
+
+    let (query, variables) = batch_query(&[target]);
+
+    assert!(
+        query.contains("p0: repository(owner: $o0, name: $n0) { pullRequest(number: $m0)"),
+        "{query}"
+    );
+    assert!(query.contains("$m0: Int!"), "{query}");
+    assert_eq!(variables[2], ("m0".to_string(), "12".to_string(), true));
+    assert_eq!(Target::pull_request("https://example.com/x"), None);
+}
+
+#[test]
+fn the_answer_for_a_known_pull_request_is_that_pull_request() {
+    let output = json!({"data": {"p0": {"pullRequest": node(json!({"number": 12}))}}}).to_string();
+
+    let found = parse_batch(&output, 1).unwrap();
+
+    assert_eq!(found[0].len(), 1);
+    assert_eq!(found[0][0].number, 12);
 }
 
 #[test]

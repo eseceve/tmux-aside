@@ -10,7 +10,7 @@ elif command -v wl-copy >/dev/null; then printf %s \"$1\" | wl-copy; \
 else printf %s \"$1\" | xclip -selection clipboard; fi";
 
 /// GraphQL fragment `PullRequestFields` selecting the fields a [`PullRequest`] is read from.
-pub const PULL_REQUEST_FIELDS: &str = "fragment PullRequestFields on PullRequest { number title url headRefOid state isCrossRepository isDraft additions deletions reviewDecision createdAt updatedAt author { login } labels(first: 50) { nodes { name } } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } latestReviews(first: 20) { nodes { state author { login } } } reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } ... on Bot { login } } } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } } }";
+pub const PULL_REQUEST_FIELDS: &str = "fragment PullRequestFields on PullRequest { number title url headRefName headRefOid state isCrossRepository isDraft additions deletions reviewDecision createdAt updatedAt author { login } labels(first: 50) { nodes { name } } mergeable reviewThreads(first: 100) { nodes { isResolved } } latestOpinionatedReviews(first: 20) { nodes { state } } latestReviews(first: 20) { nodes { state author { login } } } reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } ... on Bot { login } } } } baseRef { branchProtectionRule { requiredApprovingReviewCount } } repository { name nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } } }";
 
 /// GraphQL query listing pull requests that match a GitHub search (`$q`), with the fields
 /// the rows show.
@@ -72,6 +72,9 @@ pub struct PullRequest {
     pub number: u64,
     pub title: String,
     pub url: String,
+    /// The pull request's branch.
+    #[serde(default)]
+    pub branch: String,
     /// The commit the pull request's branch points to.
     pub head: Option<String>,
     /// Merged into its base branch.
@@ -398,6 +401,8 @@ struct Node {
     title: String,
     url: String,
     #[serde(default)]
+    head_ref_name: String,
+    #[serde(default)]
     head_ref_oid: Option<String>,
     #[serde(default)]
     state: Option<String>,
@@ -609,6 +614,7 @@ impl Node {
             number: self.number,
             title: self.title,
             url: self.url,
+            branch: self.head_ref_name,
             head: self.head_ref_oid,
             merged: self.state.as_deref() == Some("MERGED"),
             closed: self.state.as_deref() == Some("CLOSED"),
