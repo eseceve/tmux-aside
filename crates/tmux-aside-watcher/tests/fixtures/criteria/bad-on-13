@@ -1,0 +1,11 @@
+#!/bin/sh
+case "$(cat)" in
+  *pull/13*)
+    case "$1" in
+      fail) exit 3 ;;
+      invalid) echo not json; exit 0 ;;
+      hang) sleep 30; exit 0 ;;
+    esac
+    ;;
+esac
+echo '{"met":true,"summary":"fine"}'

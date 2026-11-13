@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use jiff::Timestamp;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{Action, Row, Tone};
@@ -64,7 +64,7 @@ pub fn messages(language: Language) -> &'static Messages {
 }
 
 /// A pull request returned by the search.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullRequest {
     pub repository: String,
     /// `owner/name` of the repository.

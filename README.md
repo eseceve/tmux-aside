@@ -194,6 +194,8 @@ When the pull request has conflicts, or unresolved review comments, the watcher 
 
 Once the pull request is merged or closed, the watcher removes the launch's worktree and closes the agent's pane, which closes its window unless you split it (`Merged · worktree removed`). The branch is kept; files git ignores, such as `.env` files and build outputs, are removed with the worktree. When uncommitted changes or commits that are on no remote branch would be lost, it removes nothing and the row warns in yellow (`Merged · uncommitted changes kept in the worktree`) until you deal with them.
 
+Each stage is decided by a Criterion, an executable you can replace per stage under `criteria:` in the config, for example to require a label or a team's review; see [Writing a Criterion](docs/criteria.md).
+
 - `--interval 30s`: how often pull requests are fetched, all of them in one GitHub query.
 - Keys on a row: `enter` jumps to the agent, `p` opens the pull request.
 

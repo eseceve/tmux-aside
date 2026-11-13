@@ -10,8 +10,9 @@ use tmux_aside::protocol::Tone;
 use tmux_aside_agents::{AgentState, Status};
 use tmux_aside_github::{PullRequest, parse_pull_request};
 use tmux_aside_watcher::{
-    Followed, LivePane, NudgeKind, Stage, Target, Worktree, batch_query, choose_pull_request,
-    evaluate, github_repository, is_idle, parse_batch, pending_nudge, rows, should_clean_up,
+    Answer, Followed, LivePane, Stage, Target, Worktree, batch_query, choose_pull_request,
+    evaluate, github_repository, is_idle, parse_batch, pending_nudge, ready_to_merge, rows,
+    should_clean_up,
 };
 
 fn pull_request(changes: Value) -> PullRequest {
@@ -27,12 +28,23 @@ fn launch(branch: &str, task: &str) -> Launch {
     }
 }
 
-fn followed(pull_request: Option<PullRequest>) -> Followed {
+/// `launch` with `pull_request`, as the default Ready to merge Criterion answers it.
+fn following(launch: Launch, pull_request: Option<PullRequest>) -> Followed {
+    let answers = pull_request
+        .iter()
+        .filter(|pr| !pr.finished())
+        .map(|pr| (Stage::ReadyToMerge, Ok(ready_to_merge(pr, Language::En))))
+        .collect();
     Followed {
-        launch: launch("feat/x", "x"),
+        launch,
         pull_request,
         worktree: None,
+        answers,
     }
+}
+
+fn followed(pull_request: Option<PullRequest>) -> Followed {
+    following(launch("feat/x", "x"), pull_request)
 }
 
 #[test]
@@ -221,11 +233,10 @@ fn a_pull_request_that_is_not_ready_says_what_is_missing() {
 
 #[test]
 fn a_row_shows_the_stage_and_links_the_pull_request_and_the_agents_window() {
-    let followed = [Followed {
-        launch: launch("feat/dark", "Add a dark theme"),
-        pull_request: Some(pull_request(json!({}))),
-        worktree: None,
-    }];
+    let followed = [following(
+        launch("feat/dark", "Add a dark theme"),
+        Some(pull_request(json!({}))),
+    )];
 
     let rows = rows(&followed, Language::En);
 
@@ -255,11 +266,10 @@ fn a_row_shows_the_stage_and_links_the_pull_request_and_the_agents_window() {
 
 #[test]
 fn a_launch_without_a_pull_request_shows_its_task_reference() {
-    let followed = [Followed {
-        launch: launch("feat/new", "https://example.com/issues/7"),
-        pull_request: None,
-        worktree: None,
-    }];
+    let followed = [following(
+        launch("feat/new", "https://example.com/issues/7"),
+        None,
+    )];
 
     let rows = rows(&followed, Language::En);
 
@@ -271,11 +281,7 @@ fn a_launch_without_a_pull_request_shows_its_task_reference() {
 
 #[test]
 fn stages_and_summaries_are_translated() {
-    let followed = [Followed {
-        launch: launch("feat/new", "x"),
-        pull_request: None,
-        worktree: None,
-    }];
+    let followed = [following(launch("feat/new", "x"), None)];
 
     let rows = rows(&followed, Language::Es);
 
@@ -299,13 +305,11 @@ fn a_conflict_asks_the_agent_to_resolve_it() {
     .nudge
     .unwrap();
 
-    assert_eq!(nudge.kind, NudgeKind::ResolveConflicts);
     assert!(
-        nudge.text.contains("https://github.com/org/shop/pull/12"),
-        "{}",
-        nudge.text
+        nudge.contains("https://github.com/org/shop/pull/12"),
+        "{nudge}"
     );
-    assert!(nudge.text.contains("conflicts"), "{}", nudge.text);
+    assert!(nudge.contains("has conflicts"), "{nudge}");
 }
 
 #[test]
@@ -319,12 +323,7 @@ fn unresolved_review_comments_ask_the_agent_to_answer_them() {
     .nudge
     .unwrap();
 
-    assert_eq!(nudge.kind, NudgeKind::AnswerComments);
-    assert!(
-        nudge.text.contains("2 unresolved review comments"),
-        "{}",
-        nudge.text
-    );
+    assert!(nudge.contains("2 unresolved review comments"), "{nudge}");
 }
 
 #[test]
@@ -333,7 +332,7 @@ fn conflicts_are_asked_for_before_comments() {
 
     let nudge = evaluate(&followed(Some(pr)), Language::En).nudge.unwrap();
 
-    assert_eq!(nudge.kind, NudgeKind::ResolveConflicts);
+    assert!(nudge.contains("has conflicts"), "{nudge}");
 }
 
 #[test]
@@ -346,15 +345,18 @@ fn a_pull_request_with_nothing_to_do_asks_for_no_nudge() {
 #[test]
 fn a_nudge_is_pending_once_per_head_commit() {
     let mut followed = followed(Some(pull_request(json!({"mergeable": "CONFLICTING"}))));
-    let (key, _) = pending_nudge(&followed).unwrap();
+    let (key, _) = pending_nudge(&followed, Language::En).unwrap();
     followed.launch.nudges.push(key);
 
-    assert!(pending_nudge(&followed).is_none());
+    assert!(pending_nudge(&followed, Language::En).is_none());
 
-    followed.pull_request = Some(pull_request(
-        json!({"mergeable": "CONFLICTING", "headRefOid": "bbb"}),
-    ));
-    assert!(pending_nudge(&followed).is_some());
+    let again = following(
+        followed.launch.clone(),
+        Some(pull_request(
+            json!({"mergeable": "CONFLICTING", "headRefOid": "bbb"}),
+        )),
+    );
+    assert!(pending_nudge(&again, Language::En).is_some());
 }
 
 fn agent(status: Option<Status>) -> AgentState {
@@ -471,7 +473,7 @@ fn a_kept_worktree_warns_what_it_keeps() {
 fn a_merged_pull_request_asks_for_no_nudge() {
     let merged = pull_request(json!({"state": "MERGED", "mergeable": "CONFLICTING"}));
 
-    assert!(pending_nudge(&followed(Some(merged))).is_none());
+    assert!(pending_nudge(&followed(Some(merged)), Language::En).is_none());
 }
 
 #[test]
@@ -491,4 +493,76 @@ fn the_clones_own_working_tree_is_never_cleaned_up() {
         evaluate(&followed, Language::En).summary,
         "the clone's own working tree is kept"
     );
+}
+
+fn answered(answers: Vec<(Stage, Result<Answer, String>)>) -> Followed {
+    Followed {
+        answers,
+        ..followed(Some(pull_request(json!({}))))
+    }
+}
+
+#[test]
+fn an_unmet_criterion_gives_its_summary_tone_and_nudge() {
+    let evaluation = evaluate(
+        &answered(vec![(
+            Stage::ReadyToMerge,
+            Ok(Answer {
+                met: false,
+                summary: Some("needs a review from the web team".to_string()),
+                tone: Some(Tone::Warning),
+                nudge: Some("Ask the web team for a review.".to_string()),
+                deployed: None,
+            }),
+        )]),
+        Language::En,
+    );
+
+    assert_eq!(evaluation.stage, Stage::Implementing);
+    assert_eq!(evaluation.summary, "needs a review from the web team");
+    assert_eq!(evaluation.tone, Tone::Warning);
+    assert_eq!(
+        evaluation.nudge.as_deref(),
+        Some("Ask the web team for a review.")
+    );
+}
+
+#[test]
+fn a_met_criterion_moves_the_pull_request_to_its_stage() {
+    let evaluation = evaluate(
+        &answered(vec![(
+            Stage::ReadyToMerge,
+            Ok(Answer {
+                met: true,
+                ..Answer::default()
+            }),
+        )]),
+        Language::En,
+    );
+
+    assert_eq!(evaluation.stage, Stage::ReadyToMerge);
+    assert_eq!(evaluation.tone, Tone::Success);
+}
+
+#[test]
+fn a_failed_criterion_shows_its_error() {
+    let evaluation = evaluate(
+        &answered(vec![(
+            Stage::ReadyToMerge,
+            Err("timed out after 2s".to_string()),
+        )]),
+        Language::En,
+    );
+
+    assert_eq!(evaluation.stage, Stage::Implementing);
+    assert_eq!(evaluation.summary, "criterion failed: timed out after 2s");
+    assert_eq!(evaluation.tone, Tone::Danger);
+    assert_eq!(evaluation.nudge, None);
+}
+
+#[test]
+fn an_answer_ignores_unknown_fields_and_needs_only_met() {
+    let answer: Answer = serde_json::from_str(r#"{"met": false, "since": "v2"}"#).unwrap();
+
+    assert_eq!(answer, Answer::default());
 }

@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tmux_aside::i18n::Language;
 use tmux_aside::launch::Launch;
@@ -32,6 +33,18 @@ pub struct Messages {
     checks_running: &'static str,
     waiting_for_approval: &'static str,
     waiting_to_be_merged: &'static str,
+    checking: &'static str,
+    criterion_failed: fn(&str) -> String,
+    /// A Criterion ran longer than its timeout, in seconds.
+    pub timed_out: fn(f32) -> String,
+    /// A Criterion exited with this status.
+    pub exited: fn(i32) -> String,
+    /// A Criterion printed this instead of an answer.
+    pub invalid_answer: fn(&str) -> String,
+    /// A Criterion could not be started.
+    pub failed_to_start: fn(&str) -> String,
+    /// The config holding the Criteria could not be read.
+    pub invalid_config: fn(&str) -> String,
     go_to_agent: &'static str,
     open_pull_request: &'static str,
 }
@@ -57,6 +70,13 @@ const EN: Messages = Messages {
     checks_running: "checks running",
     waiting_for_approval: "waiting for approval",
     waiting_to_be_merged: "waiting to be merged",
+    checking: "checking...",
+    criterion_failed: |error| format!("criterion failed: {error}"),
+    timed_out: |seconds| format!("timed out after {seconds}s"),
+    exited: |code| format!("exited with status {code}"),
+    invalid_answer: |output| format!("invalid answer: {output}"),
+    failed_to_start: |program| format!("failed to start {program}"),
+    invalid_config: |error| format!("invalid config: {error}"),
     go_to_agent: "go to the agent",
     open_pull_request: "open the pull request in the browser",
 };
@@ -82,6 +102,13 @@ const ES: Messages = Messages {
     checks_running: "checks en curso",
     waiting_for_approval: "esperando aprobación",
     waiting_to_be_merged: "esperando el merge",
+    checking: "revisando...",
+    criterion_failed: |error| format!("el criterio falló: {error}"),
+    timed_out: |seconds| format!("sin respuesta tras {seconds}s"),
+    exited: |code| format!("terminó con estado {code}"),
+    invalid_answer: |output| format!("respuesta inválida: {output}"),
+    failed_to_start: |program| format!("no se pudo iniciar {program}"),
+    invalid_config: |error| format!("config inválida: {error}"),
     go_to_agent: "ir al agente",
     open_pull_request: "abrir el pull request en el navegador",
 };
@@ -108,6 +135,16 @@ pub enum Stage {
 }
 
 impl Stage {
+    /// The stage's name in a Criterion's [`Question`].
+    pub fn key(self) -> &'static str {
+        match self {
+            Stage::Implementing => "implementing",
+            Stage::ReadyToMerge => "ready_to_merge",
+            Stage::Merged => "merged",
+            Stage::Closed => "closed",
+        }
+    }
+
     fn name(self, language: Language) -> &'static str {
         let messages = messages(language);
         match self {
@@ -126,66 +163,85 @@ pub struct Evaluation {
     pub stage: Stage,
     pub summary: String,
     pub tone: Tone,
-    pub nudge: Option<Nudge>,
+    /// A command for the agent, one line, in English like the Templates since the agent reads it.
+    pub nudge: Option<String>,
 }
 
-/// What a Nudge asks the agent to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NudgeKind {
-    ResolveConflicts,
-    AnswerComments,
+/// What the Watcher asks a Criterion on its stdin, as one JSON object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Question {
+    /// The stage the Criterion decides: `ready_to_merge`, `qa`, `ready_to_deploy` or `deployed`.
+    pub stage: String,
+    /// The pull request's URL.
+    pub url: String,
+    /// What the Watcher already fetched about the pull request.
+    pub pull_request: PullRequest,
 }
 
-impl NudgeKind {
-    fn name(self) -> &'static str {
-        match self {
-            NudgeKind::ResolveConflicts => "conflicts",
-            NudgeKind::AnswerComments => "comments",
-        }
-    }
+/// What a Criterion answers on its stdout, as one JSON object. Unknown fields are ignored and
+/// every field but `met` is optional.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Answer {
+    /// Whether the pull request reached the stage.
+    pub met: bool,
+    /// What is missing to reach it, or where the pull request stands once it is met.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// The row's tone; `accent` until met and `success` once met when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<Tone>,
+    /// A command to type into the agent, once per head commit, while it is idle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nudge: Option<String>,
+    /// For the Deployed Criterion: whether the change is in production.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deployed: Option<bool>,
 }
 
-/// A command the Watcher types into an idle agent; the agent decides how to do it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Nudge {
-    pub kind: NudgeKind,
-    /// One line, in English like the Templates, since the agent reads it.
-    pub text: String,
-}
-
-impl Nudge {
-    fn for_pull_request(pull_request: &PullRequest) -> Option<Self> {
-        let url = &pull_request.url;
-        if pull_request.finished() {
-            None
-        } else if pull_request.conflicting {
-            Some(Nudge {
-                kind: NudgeKind::ResolveConflicts,
-                text: format!(
-                    "The pull request {url} has conflicts with its base branch. Update the branch with its base, resolve the conflicts, run the checks and push."
-                ),
-            })
-        } else if pull_request.unresolved_threads > 0 {
-            Some(Nudge {
-                kind: NudgeKind::AnswerComments,
-                text: format!(
-                    "The pull request {url} has {} unresolved review comments. Address or answer each one, push your changes and resolve the threads you fixed.",
-                    pull_request.unresolved_threads
-                ),
-            })
-        } else {
-            None
-        }
+/// The default Ready to merge Criterion: met when the github plugin would show the pull
+/// request as ready (approved, checks passing, mergeable). It asks for a Nudge on conflicts,
+/// then on unresolved review comments.
+pub fn ready_to_merge(pull_request: &PullRequest, language: Language) -> Answer {
+    let messages = messages(language);
+    let (met, summary, tone) = match pull_request.state(&[]) {
+        State::Ready => (true, messages.waiting_to_be_merged, Tone::Success),
+        State::Draft => (false, messages.draft, Tone::Accent),
+        State::Failing => (false, messages.checks_failing, Tone::Danger),
+        State::Conflicting => (false, messages.conflicts, Tone::Danger),
+        State::ChangesRequested => (false, messages.changes_requested, Tone::Warning),
+        State::Blocked => (false, messages.blocked, Tone::Warning),
+        State::Pending => (false, messages.checks_running, Tone::Accent),
+        State::Review => (false, messages.waiting_for_approval, Tone::Accent),
+    };
+    let url = &pull_request.url;
+    let nudge = if pull_request.conflicting {
+        Some(format!(
+            "The pull request {url} has conflicts with its base branch. Update the branch with its base, resolve the conflicts, run the checks and push."
+        ))
+    } else if pull_request.unresolved_threads > 0 {
+        Some(format!(
+            "The pull request {url} has {} unresolved review comments. Address or answer each one, push your changes and resolve the threads you fixed.",
+            pull_request.unresolved_threads
+        ))
+    } else {
+        None
+    };
+    Answer {
+        met,
+        summary: Some(summary.to_string()),
+        tone: Some(tone),
+        nudge,
+        deployed: None,
     }
 }
 
 /// The Nudge to type into the agent of `followed`, with the key that records it was sent,
-/// unless one of its kind was already sent for the pull request's head commit.
-pub fn pending_nudge(followed: &Followed) -> Option<(String, Nudge)> {
-    let pull_request = followed.pull_request.as_ref()?;
-    let head = pull_request.head.as_deref()?;
-    let nudge = Nudge::for_pull_request(pull_request)?;
-    let key = format!("{}@{head}", nudge.kind.name());
+/// unless one was already sent at its stage for the pull request's head commit.
+pub fn pending_nudge(followed: &Followed, language: Language) -> Option<(String, String)> {
+    let head = followed.pull_request.as_ref()?.head.as_deref()?;
+    let evaluation = evaluate(followed, language);
+    let nudge = evaluation.nudge?;
+    let key = format!("{}@{head}", evaluation.stage.key());
     (!followed.launch.nudges.contains(&key)).then_some((key, nudge))
 }
 
@@ -209,10 +265,10 @@ pub fn is_idle(state: &AgentState, pane: &LivePane) -> bool {
         && !pane.viewed
 }
 
-/// The default Ready to merge Criterion: a pull request is Ready to merge when the github
-/// plugin would show it as ready (approved, checks passing, mergeable), and Implementing
-/// otherwise, including while it does not exist. A merged or closed one says whether its
-/// worktree was removed or what kept it.
+/// Where `followed` stands. An open pull request starts at Implementing and moves through
+/// each stage whose Criterion answered met, in Lifecycle order; the first unmet one gives the
+/// summary, tone and Nudge, and a failed one shows its error. A merged or closed one says
+/// whether its worktree was removed or what kept it.
 pub fn evaluate(followed: &Followed, language: Language) -> Evaluation {
     let messages = messages(language);
     let Some(pull_request) = &followed.pull_request else {
@@ -237,24 +293,40 @@ pub fn evaluate(followed: &Followed, language: Language) -> Evaluation {
             nudge: None,
         };
     }
-    let evaluation = match pull_request.state(&[]) {
-        State::Ready => Evaluation {
-            stage: Stage::ReadyToMerge,
-            summary: messages.waiting_to_be_merged.to_string(),
-            tone: Tone::Success,
-            nudge: None,
+    let mut stage = Stage::Implementing;
+    let mut reached: Option<&Answer> = None;
+    for (next, answer) in &followed.answers {
+        match answer {
+            Err(error) => {
+                return Evaluation {
+                    stage,
+                    summary: (messages.criterion_failed)(error),
+                    tone: Tone::Danger,
+                    nudge: None,
+                };
+            }
+            Ok(answer) if answer.met => {
+                stage = *next;
+                reached = Some(answer);
+            }
+            Ok(answer) => {
+                return Evaluation {
+                    stage,
+                    summary: answer.summary.clone().unwrap_or_default(),
+                    tone: answer.tone.unwrap_or(Tone::Accent),
+                    nudge: answer.nudge.clone(),
+                };
+            }
+        }
+    }
+    match reached {
+        Some(answer) => Evaluation {
+            stage,
+            summary: answer.summary.clone().unwrap_or_default(),
+            tone: answer.tone.unwrap_or(Tone::Success),
+            nudge: answer.nudge.clone(),
         },
-        State::Draft => implementing(messages.draft, Tone::Accent),
-        State::Failing => implementing(messages.checks_failing, Tone::Danger),
-        State::Conflicting => implementing(messages.conflicts, Tone::Danger),
-        State::ChangesRequested => implementing(messages.changes_requested, Tone::Warning),
-        State::Blocked => implementing(messages.blocked, Tone::Warning),
-        State::Pending => implementing(messages.checks_running, Tone::Accent),
-        State::Review => implementing(messages.waiting_for_approval, Tone::Accent),
-    };
-    Evaluation {
-        nudge: Nudge::for_pull_request(pull_request),
-        ..evaluation
+        None => implementing(messages.checking, Tone::Accent),
     }
 }
 
@@ -274,7 +346,14 @@ pub struct Followed {
     pub pull_request: Option<PullRequest>,
     /// The state of the Launch's worktree, inspected once its pull request is merged or closed.
     pub worktree: Option<Worktree>,
+    /// What the Criteria of the stages after Implementing answered, in Lifecycle order, up to
+    /// the first unmet or failed one; an error is the reason the Criterion failed.
+    pub answers: Answers,
 }
+
+/// What the Criteria of a pull request's stages answered, in Lifecycle order; an error is the
+/// reason a Criterion failed.
+pub type Answers = Vec<(Stage, Result<Answer, String>)>;
 
 /// What removing a Launch's worktree would lose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

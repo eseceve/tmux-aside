@@ -71,6 +71,7 @@ fn every_pull_request_is_fetched_in_one_query() {
 
     let plugin = scratch.start("30s");
     plugin.rows_where("two rows", |rows| rows.len() == 2);
+    support::wait_until("the fetch", || !scratch.calls().is_empty());
 
     let calls = scratch.calls();
     assert_eq!(calls.len(), 1, "{calls:?}");

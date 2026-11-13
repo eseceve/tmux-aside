@@ -81,3 +81,5 @@ printf '{"type":"snapshot","title":"Load","rows":[{"text":"1 min","detail":"%s"}
 ```
 
 Make it executable, put it in `PATH` and add `- plugin: load` to the config.
+
+The watcher section runs a different kind of executable, a Criterion, which decides whether a pull request reached a stage; see [Writing a Criterion](criteria.md).

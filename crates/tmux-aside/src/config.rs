@@ -66,6 +66,45 @@ pub struct Config {
     pub enter: EnterAction,
     /// Language of the sidebar and the bundled plugins; the locale's when unset.
     pub language: Option<Language>,
+    /// Commands replacing the Watcher's default Criteria, per stage.
+    pub criteria: Criteria,
+}
+
+/// The Criterion of each stage of the Lifecycle that replaces the default one, if any.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Criteria {
+    /// Whether the pull request meets its merge criteria.
+    pub ready_to_merge: Option<CriterionCommand>,
+    /// Whether the merged change can be verified in a pre-production environment.
+    pub qa: Option<CriterionCommand>,
+    /// Whether QA passed.
+    pub ready_to_deploy: Option<CriterionCommand>,
+    /// Whether the change reached production.
+    pub deployed: Option<CriterionCommand>,
+}
+
+/// An executable answering whether a pull request reached a stage; see `docs/criteria.md`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CriterionCommand {
+    /// Path to the executable; `~` is not expanded.
+    pub command: String,
+    /// Arguments passed to it.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// How long it may run, such as `10s`.
+    #[serde(default = "default_criterion_timeout", deserialize_with = "duration")]
+    pub timeout: Duration,
+}
+
+fn default_criterion_timeout() -> Duration {
+    DEFAULT_TIMEOUT
+}
+
+fn duration<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Duration, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    parse_duration(&value).map_err(serde::de::Error::custom)
 }
 
 #[derive(Deserialize)]
@@ -79,6 +118,8 @@ struct RawConfig {
     #[serde(default)]
     enter: EnterAction,
     language: Option<Language>,
+    #[serde(default)]
+    criteria: Criteria,
 }
 
 #[derive(Deserialize, Default)]
@@ -153,7 +194,7 @@ pub fn load(path: &Path) -> Result<Option<Config>> {
 pub fn parse(yaml: &str) -> Result<Config> {
     let raw: Option<RawConfig> =
         serde_saphyr::from_str(yaml).map_err(|error| anyhow!("{error}"))?;
-    let (raw_sections, raw_theme, auto_reload, enter, language) = raw
+    let (raw_sections, raw_theme, auto_reload, enter, language, criteria) = raw
         .map(|raw| {
             (
                 raw.sections,
@@ -161,6 +202,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
                 raw.auto_reload,
                 raw.enter,
                 raw.language,
+                raw.criteria,
             )
         })
         .unwrap_or_default();
@@ -200,6 +242,7 @@ pub fn parse(yaml: &str) -> Result<Config> {
         auto_reload,
         enter,
         language,
+        criteria,
     })
 }
 

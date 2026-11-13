@@ -1,11 +1,14 @@
 use std::collections::HashMap;
-use std::io::BufRead;
+use std::io::{BufRead, Read};
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{Parser, Subcommand, ValueEnum};
+use tmux_aside::config::{self, CriterionCommand};
 use tmux_aside::i18n::Language;
 use tmux_aside::launch::{self, Launch};
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
@@ -13,18 +16,23 @@ use tmux_aside::tmux;
 use tmux_aside_agents::{AgentState, agents_dir, state_file};
 use tmux_aside_github::PullRequest;
 use tmux_aside_watcher::{
-    Followed, LivePane, Target, Worktree, batch_query, choose_pull_request, github_repository,
-    is_idle, messages, parse_batch, pending_nudge, rows, should_clean_up,
+    Answer, Answers, Followed, LivePane, Question, Stage, Target, Worktree, batch_query,
+    choose_pull_request, github_repository, is_idle, messages, parse_batch, pending_nudge,
+    ready_to_merge, rows, should_clean_up,
 };
 
 const TICK: Duration = Duration::from_secs(1);
 const SUBMIT_DELAY: Duration = Duration::from_millis(500);
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+const CRITERION_POLL: Duration = Duration::from_millis(20);
 
 /// Sidebar section following every launched pull request through its Lifecycle. Run it with
 /// `mode: stream`.
 #[derive(Parser)]
 #[command(version)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<WatcherCommand>,
     /// How often pull requests are fetched from GitHub, in one query for all of them
     #[arg(long, default_value = "30s", value_parser = tmux_aside::config::parse_duration)]
     interval: Duration,
@@ -33,14 +41,44 @@ struct Cli {
     title: Option<String>,
 }
 
+#[derive(Subcommand)]
+enum WatcherCommand {
+    /// Run a default Criterion: read a question as JSON on stdin and print the answer
+    Criterion {
+        #[arg(value_enum)]
+        stage: DefaultCriterion,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum DefaultCriterion {
+    ReadyToMerge,
+}
+
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    let cli = Cli::parse();
+    let result = match cli.command {
+        Some(WatcherCommand::Criterion { stage }) => answer(stage),
+        None => run(cli),
+    };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error:#}");
             ExitCode::FAILURE
         }
     }
+}
+
+fn answer(stage: DefaultCriterion) -> Result<()> {
+    let language = Language::from_env();
+    let question: Question = serde_json::from_reader(std::io::stdin().lock())
+        .context("expected a Criterion question as JSON on stdin")?;
+    let answer = match stage {
+        DefaultCriterion::ReadyToMerge => ready_to_merge(&question.pull_request, language),
+    };
+    println!("{}", serde_json::to_string(&answer)?);
+    Ok(())
 }
 
 fn run(cli: Cli) -> Result<()> {
@@ -56,23 +94,42 @@ fn run(cli: Cli) -> Result<()> {
         for _ in std::io::stdin().lock().lines() {}
         std::process::exit(0);
     });
-    let mut pull_requests: HashMap<String, PullRequest> = HashMap::new();
+    let mut latest = Refresh::default();
+    let mut refreshing: Option<Receiver<Result<Refresh>>> = None;
     let mut fetched: Option<(Instant, Vec<String>)> = None;
     let mut last = String::new();
     loop {
-        let mut launches: Vec<Launch> = launch::list()?
+        let launches: Vec<Launch> = launch::list()?
             .into_iter()
             .filter(|launch| launch.opens_pull_request)
             .collect();
+        if let Some(receiver) = &refreshing {
+            match receiver.try_recv() {
+                Ok(refresh) => {
+                    latest = refresh?;
+                    refreshing = None;
+                }
+                Err(TryRecvError::Disconnected) => refreshing = None,
+                Err(TryRecvError::Empty) => {}
+            }
+        }
         let ids: Vec<String> = launches.iter().map(|launch| launch.id.clone()).collect();
         let due = fetched
             .as_ref()
             .is_none_or(|(at, known)| at.elapsed() >= cli.interval || *known != ids);
-        if due {
-            pull_requests = fetch(&launches, language)?;
-            record_pull_requests(&mut launches, &pull_requests)?;
+        if due && refreshing.is_none() {
+            let (sender, receiver) = mpsc::channel();
+            let snapshot = launches.clone();
+            std::thread::spawn(move || {
+                let _ = sender.send(refresh(&snapshot, language));
+            });
+            refreshing = Some(receiver);
             fetched = Some((Instant::now(), ids));
         }
+        let Refresh {
+            pull_requests,
+            answers,
+        } = &latest;
         let mut followed: Vec<Followed> = launches
             .into_iter()
             .map(|launch| {
@@ -84,13 +141,14 @@ fn run(cli: Cli) -> Result<()> {
                             false => inspect_worktree(&launch.worktree, pr.head.as_deref()),
                         },
                     ),
+                    answers: answers.get(&launch.id).cloned().unwrap_or_default(),
                     pull_request,
                     launch,
                 }
             })
             .collect();
         for followed in &mut followed {
-            nudge(followed)?;
+            nudge(followed, language)?;
             if should_clean_up(followed) && clean_up(&followed.launch) {
                 followed.worktree = Some(Worktree::Missing);
             }
@@ -106,6 +164,164 @@ fn run(cli: Cli) -> Result<()> {
         }
         std::thread::sleep(TICK.min(cli.interval));
     }
+}
+
+/// What one fetch learned: the pull request of each Launch and its Criteria's answers, both
+/// keyed by Launch id.
+#[derive(Default)]
+struct Refresh {
+    pull_requests: HashMap<String, PullRequest>,
+    answers: HashMap<String, Answers>,
+}
+
+/// Fetches the launched pull requests, records newly found ones and asks their Criteria. Runs
+/// off the main loop, so that a slow Criterion never stops the rows from updating.
+fn refresh(launches: &[Launch], language: Language) -> Result<Refresh> {
+    let pull_requests = fetch(launches, language)?;
+    record_pull_requests(launches, &pull_requests)?;
+    let answers = match criteria() {
+        Ok(criteria) => ask_criteria(&pull_requests, &criteria, language),
+        Err(error) => {
+            let error = (messages(language).invalid_config)(&format!("{error:#}"));
+            pull_requests
+                .keys()
+                .map(|id| (id.clone(), vec![(Stage::ReadyToMerge, Err(error.clone()))]))
+                .collect()
+        }
+    };
+    Ok(Refresh {
+        pull_requests,
+        answers,
+    })
+}
+
+/// The command of each stage's Criterion after Implementing, in Lifecycle order: the one in
+/// the config, or the default one, which this binary runs.
+fn criteria() -> Result<Vec<(Stage, Vec<String>, Duration)>> {
+    let configured = config::load(&config::default_path()?)?
+        .map(|config| config.criteria)
+        .unwrap_or_default();
+    let exe = std::env::current_exe()
+        .map(|exe| exe.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "tmux-aside-watcher".to_string());
+    let default = |name: &str| {
+        (
+            vec![exe.clone(), "criterion".to_string(), name.to_string()],
+            DEFAULT_TIMEOUT,
+        )
+    };
+    let command = |configured: Option<CriterionCommand>, name: &str| match configured {
+        Some(criterion) => (
+            [vec![criterion.command], criterion.args].concat(),
+            criterion.timeout,
+        ),
+        None => default(name),
+    };
+    let (ready_command, ready_timeout) = command(configured.ready_to_merge, "ready-to-merge");
+    Ok(vec![(Stage::ReadyToMerge, ready_command, ready_timeout)])
+}
+
+/// Asks the Criteria of every open pull request, all pull requests at once, each one's stages
+/// in order until one is unmet or fails, keyed by Launch id.
+fn ask_criteria(
+    pull_requests: &HashMap<String, PullRequest>,
+    criteria: &[(Stage, Vec<String>, Duration)],
+    language: Language,
+) -> HashMap<String, Answers> {
+    std::thread::scope(|scope| {
+        let asked: Vec<_> = pull_requests
+            .iter()
+            .filter(|(_, pr)| !pr.finished())
+            .map(|(id, pr)| {
+                let handle = scope.spawn(move || {
+                    let mut answers = Vec::new();
+                    for (stage, command, timeout) in criteria {
+                        let question = Question {
+                            stage: stage.key().to_string(),
+                            url: pr.url.clone(),
+                            pull_request: pr.clone(),
+                        };
+                        let answer = ask(command, &question, *timeout, language);
+                        let go_on = matches!(&answer, Ok(answer) if answer.met);
+                        answers.push((*stage, answer));
+                        if !go_on {
+                            break;
+                        }
+                    }
+                    answers
+                });
+                (id.clone(), handle)
+            })
+            .collect();
+        asked
+            .into_iter()
+            .map(|(id, handle)| {
+                let answers = handle.join().unwrap_or_else(|_| {
+                    let error = (messages(language).failed_to_start)("criterion");
+                    vec![(Stage::ReadyToMerge, Err(error))]
+                });
+                (id, answers)
+            })
+            .collect()
+    })
+}
+
+/// Runs one Criterion `command` with `question` on its stdin. After `timeout` it kills the
+/// Criterion with every process it started, which share its process group.
+fn ask(
+    command: &[String],
+    question: &Question,
+    timeout: Duration,
+    language: Language,
+) -> Result<Answer, String> {
+    let messages = messages(language);
+    let (program, args) = command
+        .split_first()
+        .ok_or_else(|| (messages.failed_to_start)("criterion"))?;
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .process_group(0)
+        .spawn()
+        .map_err(|_| (messages.failed_to_start)(program))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = serde_json::to_writer(&mut stdin, question);
+    }
+    let mut stdout = child.stdout.take().expect("stdout is piped");
+    let (sender, output) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stdout.read_to_string(&mut text);
+        let _ = sender.send(text);
+    });
+    let deadline = Instant::now() + timeout;
+    let timed_out = |child: &mut std::process::Child| {
+        let _ = Command::new("kill")
+            .args(["-KILL", &format!("-{}", child.id())])
+            .status();
+        let _ = child.wait();
+        Err((messages.timed_out)(timeout.as_secs_f32()))
+    };
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(CRITERION_POLL),
+            _ => return timed_out(&mut child),
+        }
+    };
+    let left = deadline.saturating_duration_since(Instant::now());
+    let Ok(output) = output.recv_timeout(left.max(CRITERION_POLL)) else {
+        return timed_out(&mut child);
+    };
+    if !status.success() {
+        return Err((messages.exited)(status.code().unwrap_or(-1)));
+    }
+    serde_json::from_str(output.trim()).map_err(|_| {
+        let preview: String = output.trim().chars().take(60).collect();
+        (messages.invalid_answer)(&preview)
+    })
 }
 
 /// The open pull request of every Launch whose clone has a GitHub origin, keyed by Launch id.
@@ -158,15 +374,16 @@ fn fetch(launches: &[Launch], language: Language) -> Result<HashMap<String, Pull
 
 /// Writes the URL of each newly found pull request into its Launch, for `tmux-aside status`.
 fn record_pull_requests(
-    launches: &mut [Launch],
+    launches: &[Launch],
     pull_requests: &HashMap<String, PullRequest>,
 ) -> Result<()> {
     for launch in launches {
         if let Some(pr) = pull_requests.get(&launch.id)
             && launch.pull_request.as_deref() != Some(pr.url.as_str())
         {
-            launch.pull_request = Some(pr.url.clone());
-            launch::save(launch)?;
+            launch::update(&launch.id, |launch| {
+                launch.pull_request = Some(pr.url.clone());
+            })?;
         }
     }
     Ok(())
@@ -177,17 +394,17 @@ fn record_pull_requests(
 ///
 /// The Nudge is recorded before it is typed, so that a failure or a restart in between can
 /// lose it but never type it twice. A pane that cannot be typed into does not stop the Watcher.
-fn nudge(followed: &mut Followed) -> Result<()> {
-    let Some((key, nudge)) = pending_nudge(followed) else {
+fn nudge(followed: &mut Followed, language: Language) -> Result<()> {
+    let Some((key, nudge)) = pending_nudge(followed, language) else {
         return Ok(());
     };
     let pane = followed.launch.pane.clone();
     if !agent_is_idle(&pane) {
         return Ok(());
     }
-    followed.launch.nudges.push(key);
-    launch::save(&followed.launch)?;
-    let typed = tmux::run(&["send-keys", "-t", &pane, "-l", "--", &nudge.text]).and_then(|_| {
+    followed.launch.nudges.push(key.clone());
+    launch::update(&followed.launch.id, |launch| launch.nudges.push(key))?;
+    let typed = tmux::run(&["send-keys", "-t", &pane, "-l", "--", &nudge]).and_then(|_| {
         std::thread::sleep(SUBMIT_DELAY);
         tmux::run(&["send-keys", "-t", &pane, "Enter"])
     });

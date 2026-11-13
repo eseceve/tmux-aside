@@ -26,7 +26,7 @@ CI runs `cargo fmt --all --check`, the same clippy command and the tests, with `
 | `crates/tmux-aside` | The command, the daemon (shared view, plugin supervision) and the sidebar client (layout and rendering). |
 | `crates/tmux-aside-*` | One crate per bundled plugin. Logic that can be tested lives in `src/lib.rs`; `src/main.rs` talks to the outside world. |
 
-The plugin protocol is described in [docs/plugins.md](docs/plugins.md). How the sidebar is used and configured is described in the [README](README.md).
+The plugin protocol is described in [docs/plugins.md](docs/plugins.md), and the contract of the watcher's Criteria in [docs/criteria.md](docs/criteria.md). How the sidebar is used and configured is described in the [README](README.md).
 
 ## Rules that are easy to break
 

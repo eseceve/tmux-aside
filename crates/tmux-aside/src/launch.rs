@@ -79,7 +79,7 @@ pub struct Launch {
     pub task: String,
     pub opens_pull_request: bool,
     pub pull_request: Option<String>,
-    /// Nudges already typed into the agent, each as `kind@head commit`.
+    /// Nudges already typed into the agent, each as `stage@head commit`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nudges: Vec<String>,
 }
@@ -435,6 +435,19 @@ pub fn follow(url: &str, language: Language) -> Result<Launch> {
     std::fs::create_dir_all(&directory)?;
     write(&record, &launch)?;
     Ok(launch)
+}
+
+/// Changes the recorded Launch `id` as it is on disk now, so that changes made meanwhile by
+/// another process are kept. Does nothing when it is not recorded.
+pub fn update(id: &str, change: impl FnOnce(&mut Launch)) -> Result<()> {
+    let record = launches_dir()?.join(format!("{id}.json"));
+    let Ok(json) = std::fs::read_to_string(&record) else {
+        return Ok(());
+    };
+    let mut launch: Launch = serde_json::from_str(&json)
+        .with_context(|| format!("invalid launch {}", record.display()))?;
+    change(&mut launch);
+    write(&record, &launch)
 }
 
 /// Records `launch`, replacing its previous record.

@@ -132,10 +132,11 @@ fn the_same_nudge_is_typed_once_per_head_commit() {
     setup.scratch.respond(found(&[Some(conflicting("bbb"))]));
 
     assert_eq!(setup.wait_for_typed(2).len(), 2);
-    assert_eq!(
-        recorded_nudges(&setup.scratch),
-        ["conflicts@aaa", "conflicts@bbb"]
-    );
+    let heads: Vec<String> = recorded_nudges(&setup.scratch)
+        .iter()
+        .filter_map(|key| key.rsplit_once('@').map(|(_, head)| head.to_string()))
+        .collect();
+    assert_eq!(heads, ["aaa", "bbb"]);
 }
 
 #[test]

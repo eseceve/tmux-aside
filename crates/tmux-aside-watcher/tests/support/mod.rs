@@ -38,6 +38,13 @@ impl Scratch {
         scratch
     }
 
+    /// Writes the tmux-aside config the Watcher reads.
+    pub fn configure(&self, yaml: &str) {
+        let dir = self.0.join("config/tmux-aside");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.yaml"), yaml).unwrap();
+    }
+
     pub fn respond(&self, response: Value) {
         let path = self.0.join("response");
         std::fs::write(path.with_extension("tmp"), response.to_string()).unwrap();
@@ -339,5 +346,14 @@ impl Drop for Tmux {
         let _ = Command::new("tmux")
             .args(["-L", &self.name, "kill-server"])
             .output();
+    }
+}
+
+/// Waits until `condition` holds, failing after 5 seconds.
+pub fn wait_until(what: &str, condition: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !condition() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(50));
     }
 }

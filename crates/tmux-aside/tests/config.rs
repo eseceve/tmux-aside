@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use tmux_aside::config::{Config, EnterAction, Mode, Pin, Theme, parse, parse_duration};
+use tmux_aside::config::{
+    Config, Criteria, CriterionCommand, EnterAction, Mode, Pin, Theme, parse, parse_duration,
+};
 use tmux_aside::i18n::Language;
 
 #[test]
@@ -56,6 +58,7 @@ fn an_empty_file_has_no_sections() {
             auto_reload: false,
             enter: EnterAction::Focus,
             language: None,
+            criteria: Criteria::default(),
         }
     );
 }
@@ -212,4 +215,27 @@ fn the_example_config_is_valid() {
     let config = parse(include_str!("../../../examples/config.yaml")).unwrap();
 
     assert_eq!(config.sections.len(), 6);
+}
+
+#[test]
+fn parses_the_criteria_that_replace_the_defaults() {
+    let config = parse(
+        "criteria:\n  ready_to_merge:\n    command: /opt/ready\n    args: [\"--team\", \"web\"]\n    timeout: 2s\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.criteria.ready_to_merge,
+        Some(CriterionCommand {
+            command: "/opt/ready".to_string(),
+            args: vec!["--team".to_string(), "web".to_string()],
+            timeout: Duration::from_secs(2),
+        })
+    );
+    assert_eq!(config.criteria.qa, None);
+}
+
+#[test]
+fn an_unknown_stage_in_the_criteria_is_rejected() {
+    assert!(parse("criteria:\n  merged:\n    command: /opt/x\n").is_err());
 }

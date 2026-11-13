@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 tmux-aside = { version = "0.1.0", path = "../tmux-aside" }
 tmux-aside-agents = { version = "0.1.0", path = "../tmux-aside-agents" }
