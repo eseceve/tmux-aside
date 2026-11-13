@@ -71,7 +71,7 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
 | `tmux-aside toggle` | On if off, off if on. |
 | `tmux-aside focus` | Move the focus to the sidebar of the current window. Does nothing while the sidebar is off. |
 | `tmux-aside reload` | Reread the config and restart the plugins. Sections whose config did not change keep their content. |
-| `tmux-aside setup` | Bind keys in your tmux config (`~/.tmux.conf`, or the XDG one when that is the one you have; `--config` to choose), install AI hooks and optionally a [Pack](#packs) (`--pack PATH_OR_URL`), asking for each. |
+| `tmux-aside setup` | Bind keys in your tmux config (`~/.tmux.conf`, or the XDG one when that is the one you have; `--config` to choose), install AI hooks, the [skills](#skills) for each chosen AI (`--skills`, `--no-skills`) and optionally a [Pack](#packs) (`--pack PATH_OR_URL`), asking for each. |
 | `tmux-aside launch REPO --template NAME --task TEXT --branch BRANCH [--base REF] [--group NAME]` | Start an AI agent on a task in its own branch, worktree and background window. See [Launching agents](#launching-agents). |
 | `tmux-aside launch REPO --template NAME --pr URL [--task TEXT]` | Start an AI agent on an existing pull request, in a worktree of its branch. |
 | `tmux-aside qa URL...` | Launch one QA agent, with a fresh context and the `qa` template, for pull requests that launches follow. |
@@ -100,6 +100,10 @@ tmux-aside ships an `implement` template, an `adopt` one for `--pr`, a `qa` one 
 To take over a pull request that was opened by hand, or whose agent was lost, run `tmux-aside launch ~/src/app --template adopt --pr https://github.com/org/app/pull/12`: it checks out the pull request's branch in a new worktree (reusing the local branch when there is one) and the task reference is the pull request's URL. The pull request must be open and belong to the clone's `origin` on GitHub; pull requests from forks are not supported. When an agent is already working on a pull request, let it register itself instead: `tmux-aside follow https://github.com/org/app/pull/12`, run from its pane (an agent can run it itself), records that agent with the worktree it runs in, and creates nothing. It needs the agent's tmux-aside hooks, so that its status is known.
 
 Add `--group NAME` to put launches that belong together in a Group, such as the pull requests of one task across repositories, or those that must be tested together: the watcher shows them together and runs their QA once, for all of them.
+
+### Skills
+
+`tmux-aside setup` asks, for each AI you chose, whether to install two skills, so that an agent can launch work from a conversation: `/tmux-aside-launch` turns a request such as "start agents on issues 12 and 14 in api, as one group" into `tmux-aside launch` commands, choosing the template, repositories and branches, and `/tmux-aside-qa` runs `tmux-aside qa` and `tmux-aside fix`. They hold no logic beyond understanding the request and calling the commands. They go to `$CLAUDE_CONFIG_DIR/skills` (`~/.claude/skills`) for Claude Code and `$CODEX_HOME/skills` (`~/.codex/skills`) for Codex; Antigravity gets none yet. Running setup again replaces them and leaves your own skills alone.
 
 ### Packs
 

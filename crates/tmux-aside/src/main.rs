@@ -58,6 +58,12 @@ enum Command {
         /// Install no AI hooks
         #[arg(long)]
         no_hooks: bool,
+        /// Install the /tmux-aside-launch and /tmux-aside-qa skills for each chosen AI
+        #[arg(long, conflicts_with = "no_skills")]
+        skills: bool,
+        /// Install no skills
+        #[arg(long)]
+        no_skills: bool,
         /// Use the Pack at this path, or clone it from this git URL (pulled again on each run)
         #[arg(long, value_name = "PATH_OR_URL")]
         pack: Option<String>,
@@ -179,6 +185,8 @@ fn main() -> Result<()> {
             reload,
             hooks,
             no_hooks,
+            skills,
+            no_skills,
             pack,
             yes,
         } => setup::run(setup::Options {
@@ -198,6 +206,11 @@ fn main() -> Result<()> {
                 hooks.map(|ais| ais.into_iter().map(Ai::from).collect())
             },
             pack,
+            skills: match (skills, no_skills) {
+                (true, _) => Some(true),
+                (_, true) => Some(false),
+                _ => None,
+            },
             defaults: yes,
         }),
         Command::Launch {

@@ -1,3 +1,4 @@
 #!/bin/sh
-printf '%s' "$1" > "$PWD/.agent-prompt"
+printf %s "$1" > "$PWD/.agent-prompt.partial"
+mv "$PWD/.agent-prompt.partial" "$PWD/.agent-prompt"
 exec sleep 60

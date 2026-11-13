@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
-use inquire::{MultiSelect, Select, Text};
+use inquire::{Confirm, MultiSelect, Select, Text};
 use serde::{Deserialize, Serialize};
 
 use crate::hooks::{shell_quote, tmux_quote};
@@ -14,6 +14,17 @@ use crate::tmux;
 use crate::{config, pack};
 
 const BLOCK_START: &str = "# >>> tmux-aside >>>";
+/// The skills tmux-aside installs for each AI that reads skills, as folder name and text.
+pub const SKILLS: [(&str, &str); 2] = [
+    (
+        "tmux-aside-launch",
+        include_str!("../skills/tmux-aside-launch/SKILL.md"),
+    ),
+    (
+        "tmux-aside-qa",
+        include_str!("../skills/tmux-aside-qa/SKILL.md"),
+    ),
+];
 const BLOCK_END: &str = "# <<< tmux-aside <<<";
 const UNBOUND: &str = "-";
 
@@ -80,6 +91,14 @@ impl Ai {
     /// Every AI with hooks support, in the order they are offered.
     pub const ALL: [Ai; 3] = [Ai::Claude, Ai::Codex, Ai::Agy];
 
+    fn name(self) -> &'static str {
+        match self {
+            Ai::Claude => "Claude Code",
+            Ai::Codex => "Codex",
+            Ai::Agy => "Antigravity",
+        }
+    }
+
     fn description(self) -> &'static str {
         match self {
             Ai::Claude => "Claude Code: agent status and plan usage",
@@ -100,6 +119,22 @@ impl Ai {
             Ai::Claude | Ai::Codex => vec![prompt.to_string()],
             Ai::Agy => vec!["--prompt-interactive".to_string(), prompt.to_string()],
         }
+    }
+
+    /// The folder the AI reads its skills from, or `None` when tmux-aside installs none for
+    /// it: `$CLAUDE_CONFIG_DIR/skills` (`~/.claude/skills`) and `$CODEX_HOME/skills`
+    /// (`~/.codex/skills`).
+    pub fn skills_dir(self) -> Option<PathBuf> {
+        let (variable, fallback) = match self {
+            Ai::Claude => ("CLAUDE_CONFIG_DIR", ".claude"),
+            Ai::Codex => ("CODEX_HOME", ".codex"),
+            Ai::Agy => return None,
+        };
+        let home = std::env::var_os(variable)
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| std::env::home_dir().map(|home| home.join(fallback)))?;
+        Some(home.join("skills"))
     }
 
     /// The command that starts the AI.
@@ -141,6 +176,8 @@ pub struct Options {
     pub ais: Option<Vec<Ai>>,
     /// A Pack's path or git URL.
     pub pack: Option<String>,
+    /// Whether to install the skills for each chosen AI; asked when unset.
+    pub skills: Option<bool>,
     pub defaults: bool,
 }
 
@@ -325,6 +362,27 @@ pub fn run(options: Options) -> Result<()> {
         None => Ai::ALL.to_vec(),
     };
 
+    let skills: Vec<Ai> = ais
+        .iter()
+        .copied()
+        .filter(|ai| ai.skills_dir().is_some())
+        .map(|ai| -> Result<Option<Ai>> {
+            let install = match options.skills {
+                Some(install) => install,
+                None if interactive => Confirm::new(&format!(
+                    "Install the /tmux-aside-launch and /tmux-aside-qa skills for {}?",
+                    ai.name()
+                ))
+                .with_default(true)
+                .prompt()
+                .context("setup canceled; nothing was changed")?,
+                None => true,
+            };
+            Ok(install.then_some(ai))
+        })
+        .filter_map(Result::transpose)
+        .collect::<Result<_>>()?;
+
     let pack = match options.pack {
         Some(pack) => Some(pack),
         None if interactive => Some(
@@ -376,10 +434,31 @@ pub fn run(options: Options) -> Result<()> {
         path.display()
     );
 
-    for ai in ais {
+    for ai in &ais {
         for (plugin, argument) in ai.setups() {
             install_hooks(plugin, argument);
         }
+    }
+
+    if options.skills != Some(false) && ais.contains(&Ai::Agy) {
+        println!("Antigravity: skills are not installed for it");
+    }
+    if options.skills == Some(true) && skills.is_empty() {
+        println!("No AI chosen, so no skills were installed; choose them with --hooks");
+    }
+    for ai in skills {
+        let dir = ai.skills_dir().context("no skills folder")?;
+        for (name, text) in SKILLS {
+            let folder = dir.join(name);
+            if folder.exists() {
+                std::fs::remove_dir_all(&folder)
+                    .with_context(|| format!("failed to replace {}", folder.display()))?;
+            }
+            std::fs::create_dir_all(&folder)?;
+            std::fs::write(folder.join("SKILL.md"), text)
+                .with_context(|| format!("failed to write {}", folder.display()))?;
+        }
+        println!("{}: skills installed in {}", ai.name(), dir.display());
     }
 
     if let Some(dir) = pack {
