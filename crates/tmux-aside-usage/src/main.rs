@@ -39,6 +39,11 @@ enum Command {
         #[command(subcommand)]
         tool: SetupTool,
     },
+    /// Restore the statusline `setup` wrapped
+    Uninstall {
+        #[command(subcommand)]
+        tool: SetupTool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -54,6 +59,9 @@ fn main() -> ExitCode {
         Some(Command::Setup {
             tool: SetupTool::Claude,
         }) => setup_claude(),
+        Some(Command::Uninstall {
+            tool: SetupTool::Claude,
+        }) => uninstall_claude(),
         None => parse_duration(&cli.codex_interval)
             .and_then(|interval| run_plugin(interval, cli.only_running)),
     };
@@ -208,14 +216,50 @@ fn fetch_codex_limits() -> Result<Value> {
         .ok_or_else(|| anyhow!("codex app-server returned no result"))
 }
 
-fn setup_claude() -> Result<()> {
+fn claude_settings() -> Result<PathBuf> {
     let dir = match std::env::var_os("CLAUDE_CONFIG_DIR").filter(|dir| !dir.is_empty()) {
         Some(dir) => PathBuf::from(dir),
         None => std::env::home_dir()
             .ok_or_else(|| anyhow!("cannot locate the home directory"))?
             .join(".claude"),
     };
-    let path = dir.join("settings.json");
+    Ok(dir.join("settings.json"))
+}
+
+/// Puts back the statusline command `setup_claude` wrapped, if it is wrapped.
+fn uninstall_claude() -> Result<()> {
+    let path = claude_settings()?;
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
+    let mut settings: Value = serde_json::from_str(&content)
+        .with_context(|| format!("{} is not valid JSON; nothing was changed", path.display()))?;
+    let Some(original) = settings
+        .pointer("/statusLine/command")
+        .and_then(Value::as_str)
+        .and_then(wrapped_statusline)
+    else {
+        return Ok(());
+    };
+    settings["statusLine"]["command"] = json!(original);
+    let backup = path.with_extension("json.bak");
+    if !backup.exists() {
+        std::fs::write(backup, &content)?;
+    }
+    std::fs::write(
+        &path,
+        format!("{}\n", serde_json::to_string_pretty(&settings)?),
+    )?;
+    println!("Claude Code statusline restored in {}", path.display());
+    Ok(())
+}
+
+fn setup_claude() -> Result<()> {
+    let path = claude_settings()?;
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read {}", path.display()))?;
     let mut settings: Value = serde_json::from_str(&content)

@@ -296,3 +296,52 @@ fn agy_hooks_sit_next_to_other_hook_groups() {
     let groups: Vec<&String> = settings.as_object().unwrap().keys().collect();
     assert_eq!(groups, ["workmux-status", "tmux-aside"]);
 }
+
+#[test]
+fn removing_the_hooks_keeps_everyone_elses_and_drops_what_is_left_empty() {
+    let mut settings = serde_json::json!({
+        "theme": "dark",
+        "hooks": {
+            "Stop": [
+                {"hooks": [
+                    {"type": "command", "command": "'/bin/tmux-aside-agents' set-status done"},
+                    {"type": "command", "command": "notify-me"}
+                ]}
+            ],
+            "Notification": [
+                {"hooks": [{"type": "command", "command": "'/bin/tmux-aside-agents' set-status waiting"}]}
+            ]
+        }
+    });
+
+    assert!(tmux_aside_agents::remove_hooks(&mut settings));
+
+    assert_eq!(
+        settings,
+        serde_json::json!({
+            "theme": "dark",
+            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "notify-me"}]}]}
+        })
+    );
+}
+
+#[test]
+fn removing_the_only_hooks_drops_the_hooks_object() {
+    let mut settings = serde_json::json!({
+        "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "tmux-aside-agents set-status done"}]}]}
+    });
+
+    tmux_aside_agents::remove_hooks(&mut settings);
+
+    assert_eq!(settings, serde_json::json!({}));
+    assert!(!tmux_aside_agents::remove_hooks(&mut settings));
+}
+
+#[test]
+fn antigravitys_hook_group_is_removed_alone() {
+    let mut settings = serde_json::json!({"tmux-aside": {"Stop": []}, "mine": {}});
+
+    assert!(tmux_aside_agents::remove_agy_hooks(&mut settings));
+
+    assert_eq!(settings, serde_json::json!({"mine": {}}));
+}

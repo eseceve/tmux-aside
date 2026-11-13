@@ -586,3 +586,49 @@ pub fn project_name(path: &Path) -> String {
 fn group_name(agent: &AgentState) -> String {
     agent.project.clone()
 }
+
+/// Removes from Claude Code's or Codex's `settings` every hook whose command runs
+/// tmux-aside-agents, and the entries, event arrays and `hooks` object it leaves empty.
+/// Returns whether anything was removed.
+pub fn remove_hooks(settings: &mut Value) -> bool {
+    let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    let mut removed = false;
+    for entries in hooks.values_mut().filter_map(Value::as_array_mut) {
+        for entry in entries.iter_mut() {
+            if let Some(commands) = entry.get_mut("hooks").and_then(Value::as_array_mut) {
+                let before = commands.len();
+                commands.retain(|hook| {
+                    !hook
+                        .get("command")
+                        .and_then(Value::as_str)
+                        .is_some_and(|command| command.contains("tmux-aside-agents"))
+                });
+                removed |= commands.len() != before;
+            }
+        }
+        entries.retain(|entry| {
+            entry
+                .get("hooks")
+                .and_then(Value::as_array)
+                .is_none_or(|commands| !commands.is_empty())
+        });
+    }
+    hooks.retain(|_, entries| entries.as_array().is_none_or(|entries| !entries.is_empty()));
+    if hooks.is_empty()
+        && removed
+        && let Some(settings) = settings.as_object_mut()
+    {
+        settings.remove("hooks");
+    }
+    removed
+}
+
+/// Removes the hook group Antigravity's `settings` hold for tmux-aside. Returns whether it was
+/// there.
+pub fn remove_agy_hooks(settings: &mut Value) -> bool {
+    settings
+        .as_object_mut()
+        .is_some_and(|settings| settings.remove("tmux-aside").is_some())
+}

@@ -71,6 +71,18 @@ enum Command {
         #[arg(long)]
         yes: bool,
     },
+    /// Undo what setup added: key bindings, AI hooks, skills and the pack key
+    Uninstall {
+        /// tmux config setup wrote to [default: the one tmux reads, or ~/.tmux.conf]
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Also delete a Pack tmux-aside cloned, without asking
+        #[arg(long)]
+        delete_pack: bool,
+        /// Take the default of everything not given, without asking (keeps a cloned Pack)
+        #[arg(long)]
+        yes: bool,
+    },
     /// Start an agent on a task in its own branch, worktree and background window
     Launch {
         /// Path to the repository clone
@@ -211,6 +223,15 @@ fn main() -> Result<()> {
                 (_, true) => Some(false),
                 _ => None,
             },
+            defaults: yes,
+        }),
+        Command::Uninstall {
+            config,
+            delete_pack,
+            yes,
+        } => setup::uninstall(setup::UninstallOptions {
+            config,
+            delete_pack: delete_pack.then_some(true),
             defaults: yes,
         }),
         Command::Launch {

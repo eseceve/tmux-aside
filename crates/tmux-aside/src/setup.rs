@@ -3,7 +3,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use inquire::{Confirm, MultiSelect, Select, Text};
 use serde::{Deserialize, Serialize};
 
@@ -296,13 +296,7 @@ pub fn run(options: Options) -> Result<()> {
     let live = std::env::var_os("TMUX").is_some();
     let path = match options.config {
         Some(path) => path,
-        None => tmux_config_path(
-            &std::env::home_dir().ok_or_else(|| anyhow!("cannot locate the home directory"))?,
-            std::env::var_os("XDG_CONFIG_HOME")
-                .filter(|dir| !dir.is_empty())
-                .map(PathBuf::from)
-                .as_deref(),
-        ),
+        None => default_tmux_config()?,
     };
     let existing = match std::fs::read_to_string(&path) {
         Ok(content) => Some(content),
@@ -606,6 +600,148 @@ fn key_status(key: &str) -> KeyStatus {
         Err(error) if error.to_string().contains("unknown key") => KeyStatus::Free,
         Err(_) => KeyStatus::Unknown,
     }
+}
+
+fn default_tmux_config() -> Result<PathBuf> {
+    Ok(tmux_config_path(
+        &std::env::home_dir().ok_or_else(|| anyhow!("cannot locate the home directory"))?,
+        std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from)
+            .as_deref(),
+    ))
+}
+
+/// What `tmux-aside uninstall` was given on the command line.
+pub struct UninstallOptions {
+    /// The tmux config setup wrote to; the one tmux reads when unset.
+    pub config: Option<PathBuf>,
+    /// Delete a Pack tmux-aside cloned; asked in a terminal when unset, kept otherwise.
+    pub delete_pack: Option<bool>,
+    pub defaults: bool,
+}
+
+/// Undoes what `run` added: the marked block of the tmux config (and its keys, inside tmux),
+/// the AI hooks, the skills and the `pack` key, leaving everything else as it is. A Pack
+/// cloned by setup is deleted only when the user agrees; one given by path never is. Without
+/// a previous setup it changes nothing.
+pub fn uninstall(options: UninstallOptions) -> Result<()> {
+    let interactive = !options.defaults && std::io::stdin().is_terminal();
+    let config_path = config::default_path()?;
+    let pack_dir = config::load(&config_path)
+        .unwrap_or_else(|error| {
+            eprintln!("{error:#}");
+            None
+        })
+        .and_then(|config| config.pack)
+        .map(|dir| match config_path.parent() {
+            Some(folder) => folder.join(dir),
+            None => dir,
+        });
+    let packs = pack::packs_dir()?.canonicalize().ok();
+    let cloned = pack_dir
+        .and_then(|dir| dir.canonicalize().ok())
+        .filter(|dir| packs.is_some() && dir.parent() == packs.as_deref());
+    let delete_pack = match (&cloned, options.delete_pack) {
+        (None, _) => false,
+        (Some(_), Some(delete)) => delete,
+        (Some(dir), None) if interactive => Confirm::new(&format!(
+            "Delete the Pack tmux-aside cloned into {}?",
+            dir.display()
+        ))
+        .with_default(false)
+        .prompt()
+        .context("uninstall canceled; nothing was changed")?,
+        (Some(_), None) => false,
+    };
+
+    let path = match options.config {
+        Some(path) => path,
+        None => default_tmux_config()?,
+    };
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        let bindings = block_bindings(&content);
+        if content.lines().any(|line| line.trim() == BLOCK_START) {
+            if std::env::var_os("TMUX").is_some() {
+                for binding in &bindings {
+                    let _ = tmux::run(
+                        &[&["unbind-key"], key_arguments(&binding.key).as_slice()].concat(),
+                    );
+                }
+            }
+            rewrite(&path, &content, &merge_block(&content, ""))?;
+            println!("key bindings removed from {}", path.display());
+        }
+    }
+
+    let mut failed = Vec::new();
+    for ai in Ai::ALL {
+        for (plugin, argument) in ai.setups() {
+            let Ok(program) = plugin::resolve(plugin, Language::En) else {
+                continue;
+            };
+            let removed = Command::new(program)
+                .args(["uninstall", argument])
+                .status()
+                .is_ok_and(|status| status.success());
+            if !removed {
+                failed.push(format!("tmux-aside-{plugin} uninstall {argument}"));
+            }
+        }
+        let Some(dir) = ai.skills_dir() else {
+            continue;
+        };
+        for (name, _) in SKILLS {
+            let folder = dir.join(name);
+            if folder.exists() {
+                std::fs::remove_dir_all(&folder)
+                    .with_context(|| format!("failed to remove {}", folder.display()))?;
+                println!("{}: skill {name} removed", ai.name());
+            }
+        }
+    }
+
+    if let Ok(content) = std::fs::read_to_string(&config_path) {
+        let without = pack::with_pack_key(&content, None);
+        if without != content {
+            rewrite(&config_path, &content, &without)?;
+            println!("pack removed from {}", config_path.display());
+        }
+    }
+    match (cloned, delete_pack) {
+        (Some(dir), true) => {
+            std::fs::remove_dir_all(&dir)
+                .with_context(|| format!("failed to delete {}", dir.display()))?;
+            println!("pack {} deleted", dir.display());
+        }
+        (Some(dir), false) => println!("pack {} kept", dir.display()),
+        (None, _) => {}
+    }
+    if !failed.is_empty() {
+        bail!(
+            "these hooks may still be installed; run them by hand: {}",
+            failed.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// Replaces `content` of `path` with `changed`, without the blank lines it ends with; a file
+/// left empty is deleted. It keeps a backup, unless one is already there, such as the one setup
+/// left with the file as it was before.
+fn rewrite(path: &Path, content: &str, changed: &str) -> Result<()> {
+    let mut backup = path.to_path_buf().into_os_string();
+    backup.push(".bak");
+    if !Path::new(&backup).exists() {
+        std::fs::write(backup, content)?;
+    }
+    let changed = changed.trim_end();
+    if changed.is_empty() {
+        std::fs::remove_file(path)
+    } else {
+        std::fs::write(path, format!("{changed}\n"))
+    }
+    .with_context(|| format!("failed to write {}", path.display()))
 }
 
 fn install_hooks(plugin: &str, argument: &str) {

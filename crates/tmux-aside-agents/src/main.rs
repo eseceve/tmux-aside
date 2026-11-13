@@ -13,7 +13,8 @@ use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage, Row, Tone};
 use tmux_aside_agents::{
     AgentState, Branch, Diff, Grouping, LivePane, RowOptions, Sort, Status, agents_dir, entered,
     infer_status, messages, next_agent, notification, parse_shortstat, project_name,
-    pull_requests_by_branch, reconcile, rows, state_file, waits_for_background_agents,
+    pull_requests_by_branch, reconcile, remove_agy_hooks, remove_hooks, rows, state_file,
+    waits_for_background_agents,
 };
 
 const POLL: Duration = Duration::from_secs(1);
@@ -91,9 +92,14 @@ enum Command {
         #[command(subcommand)]
         agent: SetupAgent,
     },
+    /// Remove the hooks `setup` added, leaving every other setting as it is
+    Uninstall {
+        #[command(subcommand)]
+        agent: SetupAgent,
+    },
 }
 
-#[derive(Subcommand)]
+#[derive(Clone, Copy, Subcommand)]
 enum SetupAgent {
     /// Merge the hooks into Claude Code's settings.json ($CLAUDE_CONFIG_DIR or ~/.claude)
     Claude,
@@ -154,6 +160,7 @@ fn main() -> ExitCode {
         Some(Command::Next { status }) => jump(&statuses(status)),
         Some(Command::List { json }) => list(json),
         Some(Command::Setup { agent }) => setup(agent),
+        Some(Command::Uninstall { agent }) => uninstall(agent),
         None => run_plugin(
             RowOptions {
                 sort: match cli.sort {
@@ -791,8 +798,9 @@ const CODEX_HOOKS: [Hook; 5] = [
     ("Stop", None, "set-status done"),
 ];
 
-fn setup(agent: SetupAgent) -> Result<()> {
-    let (dir, file, name, note) = match agent {
+/// Where an agent's hooks live: its folder, file, name and a note on when they apply.
+fn hooks_file(agent: SetupAgent) -> Result<(PathBuf, &'static str, &'static str, &'static str)> {
+    Ok(match agent {
         SetupAgent::Claude => (
             config_dir("CLAUDE_CONFIG_DIR", ".claude")?,
             "settings.json",
@@ -811,7 +819,11 @@ fn setup(agent: SetupAgent) -> Result<()> {
             "Antigravity",
             "They take effect in new agy sessions.",
         ),
-    };
+    })
+}
+
+fn setup(agent: SetupAgent) -> Result<()> {
+    let (dir, file, name, note) = hooks_file(agent)?;
     let path = dir.join(file);
     let existing = match std::fs::read_to_string(&path) {
         Ok(content) => Some(content),
@@ -847,6 +859,46 @@ fn setup(agent: SetupAgent) -> Result<()> {
     )?;
     println!("{name} hooks installed in {}", path.display());
     println!("{note}");
+    Ok(())
+}
+
+/// Removes the hooks `setup` added. A hooks file of its own (Codex's, Antigravity's) left
+/// empty is deleted; Claude Code's settings file is kept.
+fn uninstall(agent: SetupAgent) -> Result<()> {
+    let (dir, file, name, _) = hooks_file(agent)?;
+    let path = dir.join(file);
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
+    let mut settings: Value = serde_json::from_str(&content)
+        .with_context(|| format!("{} is not valid JSON; nothing was changed", path.display()))?;
+    let removed = match agent {
+        SetupAgent::Agy => remove_agy_hooks(&mut settings),
+        SetupAgent::Claude | SetupAgent::Codex => remove_hooks(&mut settings),
+    };
+    if !removed {
+        return Ok(());
+    }
+    let backup = path.with_extension("json.bak");
+    if !backup.exists() {
+        std::fs::write(backup, &content)?;
+    }
+    let emptied = settings
+        .as_object()
+        .is_some_and(|settings| settings.is_empty());
+    if emptied && !matches!(agent, SetupAgent::Claude) {
+        std::fs::remove_file(&path)?;
+    } else {
+        std::fs::write(
+            &path,
+            format!("{}\n", serde_json::to_string_pretty(&settings)?),
+        )?;
+    }
+    println!("{name} hooks removed from {}", path.display());
     Ok(())
 }
 
