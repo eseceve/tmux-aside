@@ -581,6 +581,11 @@ fn agent_in_worktree(server: &TmuxServer, repo: &Repo, branch: &str) -> String {
         worktree.to_str().unwrap(),
         "exec cat",
     ]);
+    let expected = std::fs::canonicalize(&worktree).unwrap();
+    wait_for("the pane to be in its worktree", || {
+        let path = server.tmux(&["display-message", "-p", "-t", &pane, "#{pane_current_path}"]);
+        std::fs::canonicalize(path).is_ok_and(|path| path == expected)
+    });
     let pid = server.tmux(&["display-message", "-p", "-t", &pane, "#{pane_pid}"]);
     let agents = server.home.path("state/tmux-aside/agents");
     std::fs::create_dir_all(&agents).unwrap();
