@@ -133,10 +133,28 @@ fn run(cli: Cli) -> Result<()> {
     let mut last = String::new();
     let mut recorded_progress: BTreeMap<String, Progress> = BTreeMap::new();
     loop {
-        let launches: Vec<Launch> = launch::list()?
+        let all_launches = launch::list()?;
+        let protected: Vec<String> = all_launches
+            .iter()
+            .filter(|launch| !launch.opens_pull_request && !launch.pane.is_empty())
+            .map(|launch| launch.pane.clone())
+            .collect();
+        let mut launches: Vec<Launch> = all_launches
             .into_iter()
             .filter(|launch| launch.opens_pull_request)
             .collect();
+        for launch in &mut launches {
+            if protected.contains(&launch.pane) {
+                launch::update(&launch.id, |record| {
+                    record.pane.clear();
+                    record.window.clear();
+                    record.session.clear();
+                })?;
+                launch.pane.clear();
+                launch.window.clear();
+                launch.session.clear();
+            }
+        }
         if let Some(receiver) = &refreshing {
             match receiver.try_recv() {
                 Ok(refresh) => {
@@ -184,7 +202,9 @@ fn run(cli: Cli) -> Result<()> {
             })
             .collect();
         for followed in &mut followed {
-            nudge(followed, language)?;
+            if !protected.contains(&followed.launch.pane) {
+                nudge(followed, language)?;
+            }
             if should_clean_up(followed) && clean_up(&followed.launch) {
                 followed.worktree = Some(Worktree::Missing);
             }
@@ -675,7 +695,8 @@ fn link_agents(launches: &[Launch], pull_requests: &HashMap<String, PullRequest>
         .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
         .filter_map(|json| serde_json::from_str(&json).ok())
         .collect();
-    let mut taken: Vec<String> = launches
+    let all_launches = launch::list().unwrap_or_else(|_| launches.to_vec());
+    let mut taken: Vec<String> = all_launches
         .iter()
         .filter(|launch| !launch.pane.is_empty())
         .map(|launch| launch.pane.clone())
@@ -750,8 +771,8 @@ fn works_on(workdir: &Path, owner: &str, name: &str, branch: &str) -> bool {
 /// Types the pending Nudge of `followed` into its agent's pane if the agent is idle, and
 /// records it so that it is not typed again for the same head commit.
 ///
-/// The Nudge is recorded before it is typed, so that a failure or a restart in between can
-/// lose it but never type it twice. A pane that cannot be typed into does not stop the Watcher.
+/// Record only successful deliveries so a failed send can be retried. A crash between
+/// submission and persistence can cause a duplicate; delivery is not exactly-once.
 fn nudge(followed: &mut Followed, language: Language) -> Result<()> {
     if followed.launch.pane.is_empty() {
         return Ok(());
@@ -763,15 +784,18 @@ fn nudge(followed: &mut Followed, language: Language) -> Result<()> {
     if !agent_is_idle(&pane) {
         return Ok(());
     }
-    followed.launch.nudges.push(key.clone());
-    launch::update(&followed.launch.id, |launch| launch.nudges.push(key))?;
     let typed = tmux::run(&["send-keys", "-t", &pane, "-l", "--", &nudge]).and_then(|_| {
         std::thread::sleep(SUBMIT_DELAY);
         tmux::run(&["send-keys", "-t", &pane, "Enter"])
     });
     if let Err(error) = typed {
         eprintln!("failed to nudge {pane}: {error:#}");
+        return Ok(());
     }
+    launch::update(&followed.launch.id, |launch| {
+        launch.nudges.push(key.clone())
+    })?;
+    followed.launch.nudges.push(key);
     Ok(())
 }
 

@@ -135,3 +135,37 @@ fn the_agent_working_on_the_branch_is_linked_and_nudged_and_its_worktree_is_kept
     );
     assert!(launch.keeps_worktree);
 }
+
+#[test]
+fn discovery_does_not_take_a_review_agents_pane() {
+    let scratch = Scratch::new();
+    let tmux = Tmux::start();
+    let clone = scratch.repository("shop");
+    support::git(&clone, &["checkout", "-q", "-b", "feat/x"]);
+    let pane = tmux.agent_pane(&scratch.0.join("typed"), &clone);
+    tmux.report(&scratch, &pane, "done");
+    let mut review = support::launch(&clone, "feat/x");
+    review.id = "shop__review".into();
+    review.pane = pane;
+    review.opens_pull_request = false;
+    review.pull_request = None;
+    review.template = Some("review".into());
+    scratch.save(&review);
+    scratch.configure("discover:\n  - search: \"is:pr is:open author:@me\"\n");
+    let conflicting = open_pull_request(json!({"mergeable": "CONFLICTING"}));
+    scratch.respond_search(std::slice::from_ref(&conflicting));
+    scratch.respond(found(&[Some(conflicting)]));
+    let _plugin = scratch.start_in("200ms", Some(&tmux));
+    wait_until("discovery cycles", || scratch.calls().len() >= 6);
+    let launches = recorded(&scratch);
+    let discovered = launches
+        .iter()
+        .find(|launch| launch.opens_pull_request)
+        .unwrap();
+    assert!(discovered.pane.is_empty());
+    assert!(
+        std::fs::read_to_string(scratch.0.join("typed"))
+            .unwrap_or_default()
+            .is_empty()
+    );
+}

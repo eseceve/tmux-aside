@@ -151,3 +151,30 @@ fn nudges_already_sent_survive_a_watcher_restart() {
 
     assert_eq!(setup.typed().len(), 1);
 }
+
+#[test]
+fn a_different_problem_on_the_same_head_is_delivered() {
+    let setup = Setup::new("done", conflicting("aaa"));
+    let _plugin = setup.start();
+    setup.wait_for_typed(1);
+    setup.scratch.respond(found(&[Some(node(json!({
+        "headRefOid": "aaa", "mergeable": "MERGEABLE",
+        "reviewThreads": {"nodes": [{"isResolved": false}]}
+    })))]));
+    let typed = setup.wait_for_typed(2);
+    assert!(typed[1].contains("unresolved review comments"));
+}
+
+#[test]
+fn a_review_pane_never_receives_implementation_nudges() {
+    let setup = Setup::new("done", conflicting("aaa"));
+    let mut review = setup.scratch.recorded("shop__feat-x");
+    review.id = "shop__review".into();
+    review.opens_pull_request = false;
+    review.template = Some("review".into());
+    setup.scratch.save(&review);
+    let _plugin = setup.start();
+    setup.wait_for_fetches(3);
+    assert!(setup.typed().is_empty());
+    assert!(recorded_nudges(&setup.scratch).is_empty());
+}

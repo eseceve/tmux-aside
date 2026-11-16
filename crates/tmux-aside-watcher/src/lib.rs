@@ -377,7 +377,7 @@ pub fn pending_nudge(followed: &Followed, language: Language) -> Option<(String,
     let head = followed.pull_request.as_ref()?.head.as_deref()?;
     let evaluation = evaluate(followed, language);
     let nudge = evaluation.nudge?;
-    let key = format!("{}@{head}", evaluation.stage.key());
+    let key = format!("{}:{nudge}@{head}", evaluation.stage.key());
     (!followed.launch.nudges.contains(&key)).then_some((key, nudge))
 }
 
