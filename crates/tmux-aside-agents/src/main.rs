@@ -16,10 +16,11 @@ use serde_json::{Value, json};
 use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage, Row, Tone};
 use tmux_aside_agents::{
-    AgentState, Branch, Diff, Grouping, LivePane, RowOptions, Sort, Status, agents_dir, entered,
-    infer_status, messages, next_agent, notification, parse_shortstat, project_name,
-    pull_requests_by_branch, reconcile, remove_agy_hooks, remove_hooks, rows, state_file,
-    waits_for_background_agents,
+    AgentState, Branch, Diff, Grouping, LivePane, RowOptions, Sort, Status, WINDOW_STATUS_OPTION,
+    agents_dir, entered, infer_status, messages, next_agent, notification, parse_shortstat,
+    parse_window_statuses, project_name, pull_requests_by_branch, reconcile, remove_agy_hooks,
+    remove_hooks, rows, state_file, waits_for_background_agents, window_status_updates,
+    window_statuses,
 };
 
 const POLL: Duration = Duration::from_secs(1);
@@ -426,6 +427,7 @@ fn run_plugin(
     let mut last = String::new();
     let mut seen: Option<HashMap<String, Option<Status>>> = None;
     let mut known_panes: Vec<String> = Vec::new();
+    let mut published = published_window_statuses();
     while !closed.load(Ordering::Relaxed) {
         let current = branches.lock().unwrap().clone();
         let mut panes: Vec<String> = load_states(&dir)
@@ -507,6 +509,9 @@ fn run_plugin(
                         .map(|agent| (agent.pane_id.clone(), agent.status))
                         .collect(),
                 );
+                let current_windows = window_statuses(&agents);
+                publish_window_statuses(&published, &current_windows);
+                published = current_windows;
                 let rows = if agents.is_empty() {
                     let mut placeholder = Row::new(messages(options.language).no_agents);
                     placeholder.tone = Tone::Muted;
@@ -530,6 +535,32 @@ fn run_plugin(
         std::thread::sleep(POLL);
     }
     Ok(())
+}
+
+fn published_window_statuses() -> HashMap<String, Status> {
+    let format = format!("#{{window_id}}\t#{{{WINDOW_STATUS_OPTION}}}");
+    tmux(&["list-windows", "-a", "-F", &format])
+        .map(|output| parse_window_statuses(&output))
+        .unwrap_or_default()
+}
+
+fn publish_window_statuses(published: &HashMap<String, Status>, current: &HashMap<String, Status>) {
+    for (window, status) in window_status_updates(published, current) {
+        let result = match status {
+            Some(status) => tmux(&[
+                "set-option",
+                "-w",
+                "-t",
+                &window,
+                WINDOW_STATUS_OPTION,
+                status.name(),
+            ]),
+            None => tmux(&["set-option", "-wu", "-t", &window, WINDOW_STATUS_OPTION]),
+        };
+        if let Err(error) = result {
+            eprintln!("{error:#}");
+        }
+    }
 }
 
 /// When the visible content of each watched pane last changed, from hashes of its captures.

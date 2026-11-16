@@ -249,6 +249,12 @@ Lists AI coding agents running in tmux panes. Claude Code and Antigravity report
 
 Waiting stays visible until the agent reports another status; looking at its pane only acknowledges a completed turn. Agents started through `tmux-aside launch` are detected behind the launcher process too.
 
+While it runs, the plugin also publishes the status shown in each window as the window option `@tmux_aside_status` (`working`, `waiting` or `done`; unset otherwise), the most urgent one when a window has several agents. It comes from the same source as the sidebar, so it is right for Codex too, whose hooks cannot tell which pane they belong to. Use it to color your window tabs:
+
+```tmux
+setw -g window-status-format '#{?#{==:#{@tmux_aside_status},waiting},#[fg=yellow],#{?#{==:#{@tmux_aside_status},done},#[fg=green],#{?#{==:#{@tmux_aside_status},working},#[fg=magenta],#[default]}}}#W'
+```
+
 Codex starts and resumes with its default runtime, including the shared daemon. The agents plugin reads OSC 7501 from each client's own pane with `tmux pipe-pane`, binding the observation to the tmux server and client process. Tested with Codex 0.169.0. Permission and question prompts appear as waiting independently across sessions. `tmux-aside-agents setup codex` removes obsolete status hooks; the plugin also ignores legacy Codex hook writes.
 
 An observer attached after a status was emitted starts at **status unknown** until the next transition. A restart, disconnection, unsupported Codex version or an existing `pipe-pane` consumer also leaves status unknown; the plugin preserves other consumers. It retains parsed status only, not terminal transcripts. Codex errors are shown explicitly, and idle is not treated as a completed turn. These terminal signals are advisory and contain no conversation identity, so they never authorize Watcher nudges. Claude Code and Antigravity retain their hook-based completion behavior.

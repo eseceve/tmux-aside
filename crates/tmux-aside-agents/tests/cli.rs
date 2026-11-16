@@ -407,3 +407,25 @@ fn restarting_the_agent_in_the_same_pane_does_not_reuse_its_old_status() {
         })
     });
 }
+
+#[test]
+fn each_codex_window_shows_its_own_status_in_a_window_option() {
+    let tmux = Tmux::start();
+    let other = tmux.tmux(&["new-window", "-d", "-P", "-F", "#{pane_id}"]);
+    emulate_codex(&tmux, "%0");
+    emulate_codex(&tmux, &other);
+    let mut plugin = Plugin::start(&tmux, &[]);
+    plugin.next();
+    wait_for("both readers", || {
+        ["%0", &other]
+            .iter()
+            .all(|pane| tmux.tmux(&["display-message", "-p", "-t", pane, "#{pane_pipe}"]) == "1")
+    });
+    emit_status(&tmux, "%0", "blocked");
+    emit_status(&tmux, &other, "working");
+    let window_status =
+        |pane: &str| tmux.tmux(&["display-message", "-p", "-t", pane, "#{@tmux_aside_status}"]);
+    wait_for("each window's own status", || {
+        window_status("%0") == "waiting" && window_status(&other) == "working"
+    });
+}

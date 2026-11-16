@@ -595,6 +595,68 @@ fn clean_title(title: &str) -> &str {
         .trim()
 }
 
+/// tmux window option where the agents plugin publishes the status of the agents in each
+/// window, so that `window-status-format` can color the window's tab.
+pub const WINDOW_STATUS_OPTION: &str = "@tmux_aside_status";
+
+/// Status to publish for each window, by window id: the most urgent of its agents' statuses,
+/// in the order the sidebar puts them first. Windows without a status are left out.
+pub fn window_statuses(agents: &[AgentState]) -> HashMap<String, Status> {
+    let mut statuses: HashMap<String, Status> = HashMap::new();
+    for agent in agents.iter().filter(|agent| !agent.window_id.is_empty()) {
+        let Some(status) = agent.status else {
+            continue;
+        };
+        statuses
+            .entry(agent.window_id.clone())
+            .and_modify(|current| {
+                if priority(Some(status)) < priority(Some(*current)) {
+                    *current = status;
+                }
+            })
+            .or_insert(status);
+    }
+    statuses
+}
+
+/// Window options to write to go from the `published` statuses to the `current` ones, sorted
+/// by window id: `Some` sets a window's status and `None` clears it.
+pub fn window_status_updates(
+    published: &HashMap<String, Status>,
+    current: &HashMap<String, Status>,
+) -> Vec<(String, Option<Status>)> {
+    let mut updates: Vec<(String, Option<Status>)> = current
+        .iter()
+        .filter(|(window, status)| published.get(*window) != Some(*status))
+        .map(|(window, status)| (window.clone(), Some(*status)))
+        .chain(
+            published
+                .keys()
+                .filter(|window| !current.contains_key(*window))
+                .map(|window| (window.clone(), None)),
+        )
+        .collect();
+    updates.sort_by(|a, b| a.0.cmp(&b.0));
+    updates
+}
+
+/// Statuses already published in tmux, from `list-windows -F '#{window_id}\t#{@tmux_aside_status}'`.
+pub fn parse_window_statuses(output: &str) -> HashMap<String, Status> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let (window, status) = line.split_once('\t')?;
+            let status = match status.trim() {
+                "working" => Status::Working,
+                "waiting" => Status::Waiting,
+                "done" => Status::Done,
+                _ => return None,
+            };
+            Some((window.to_string(), status))
+        })
+        .collect()
+}
+
 fn priority(status: Option<Status>) -> u8 {
     match status {
         Some(Status::Waiting) => 0,
