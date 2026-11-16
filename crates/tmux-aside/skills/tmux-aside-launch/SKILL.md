@@ -1,6 +1,6 @@
 ---
 name: tmux-aside-launch
-description: Launches AI agents on tasks with tmux-aside, each in its own branch, worktree and tmux window, and reports where launched work stands. Use when the user asks to launch, start, kick off or parallelize work on one or more tasks, issues, tickets or pull requests ("lanzá estas tareas", "start an agent on issue 12 in the api repo", "take over this PR"), to put launches in a group, asks what launched agents and pull requests are doing,, wants their agents back after tmux or the computer restarted ("resucitá los agentes", "reabrí las ventanas de las tareas"), or wants launches and their worktrees cleaned up ("borrá el worktree de este PR", "limpiá los worktrees mezclados").
+description: Launches AI agents on tasks with tmux-aside, each in its own branch, worktree and tmux window, and reports where launched work stands. Use when the user asks to launch, start, kick off or parallelize work on one or more tasks, issues, tickets or pull requests ("lanzá estas tareas", "start an agent on issue 12 in the api repo", "take over this PR"), to put launches in a group, asks what launched agents and pull requests are doing, wants their agents back after tmux or the computer restarted ("resucitá los agentes", "reabrí las ventanas de las tareas"), or wants launches and their worktrees cleaned up ("borrá el worktree de este PR", "limpiá los worktrees mezclados").
 ---
 
 # tmux-aside-launch
