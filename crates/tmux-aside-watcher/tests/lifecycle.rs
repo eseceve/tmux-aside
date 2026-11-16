@@ -433,8 +433,14 @@ fn an_agent_is_idle_when_neither_working_nor_waiting_and_still_in_its_unviewed_p
     let unviewed = pane(40, "claude", false);
     assert!(is_idle(&agent(Some(Status::Done)), &unviewed));
     assert!(
-        is_idle(&agent(None), &unviewed),
-        "a done agent someone already looked at"
+        is_idle(
+            &AgentState {
+                ready: true,
+                ..agent(None)
+            },
+            &unviewed
+        ),
+        "a completed hook turn someone already looked at"
     );
     assert!(!is_idle(&agent(Some(Status::Working)), &unviewed));
     assert!(!is_idle(&agent(Some(Status::Waiting)), &unviewed));
@@ -924,12 +930,16 @@ fn a_failing_criterion_in_qa_offers_no_fix() {
 }
 
 #[test]
-fn codex_and_antigravity_agents_are_nudged_like_claude_code_when_done() {
+fn antigravity_hook_completion_allows_nudges_but_codex_visual_completion_does_not() {
     for command in ["codex", "agy"] {
         let mut state = agent(Some(Status::Done));
         state.command = command.to_string();
 
-        assert!(is_idle(&state, &pane(40, command, false)), "{command}");
+        assert_eq!(
+            is_idle(&state, &pane(40, command, false)),
+            command == "agy",
+            "{command}"
+        );
     }
 }
 
@@ -938,7 +948,17 @@ fn a_criterion_learns_whether_the_agent_is_idle_or_busy_or_gone() {
     let live = pane(40, "claude", true);
 
     assert_eq!(activity(&agent(Some(Status::Done)), &live), Some("idle"));
-    assert_eq!(activity(&agent(None), &live), Some("idle"));
+    assert_eq!(activity(&agent(None), &live), None);
+    assert_eq!(
+        activity(
+            &AgentState {
+                ready: true,
+                ..agent(None)
+            },
+            &live
+        ),
+        Some("idle")
+    );
     assert_eq!(activity(&agent(Some(Status::Working)), &live), Some("busy"));
     assert_eq!(activity(&agent(Some(Status::Waiting)), &live), Some("busy"));
     assert_eq!(
@@ -1013,4 +1033,16 @@ fn a_pull_request_is_already_followed_when_recorded_or_worked_on_before_it_is_re
         "shop",
         "feat/c"
     ));
+}
+
+#[test]
+fn unknown_inferred_and_codex_visual_states_never_trigger_a_nudge() {
+    let live = pane(40, "claude", false);
+    assert!(!is_idle(&agent(None), &live));
+    let mut inferred = agent(Some(Status::Done));
+    inferred.inferred = true;
+    assert!(!is_idle(&inferred, &live));
+    let mut codex = agent(Some(Status::Done));
+    codex.command = "codex".into();
+    assert!(!is_idle(&codex, &pane(40, "codex", false)));
 }

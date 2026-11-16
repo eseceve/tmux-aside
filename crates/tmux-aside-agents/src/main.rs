@@ -1,9 +1,14 @@
+mod capture;
+
 use std::collections::HashMap;
 use std::io::{BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitCode};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tmux_aside_agents::processes::{from_codex, pane_process};
+use tmux_aside_agents::terminal::{TerminalObservation, TerminalStatus};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -65,6 +70,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    #[command(name = "_observe", hide = true)]
+    Observe { socket: PathBuf },
     /// Record the status of the agent in $TMUX_PANE (called from agent hooks)
     SetStatus { status: StatusArg },
     /// Record that an agent started in $TMUX_PANE (called from agent hooks)
@@ -87,7 +94,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Install the status hooks into an agent's settings
+    /// Set up status tracking (remove obsolete hooks for Codex)
     Setup {
         #[command(subcommand)]
         agent: SetupAgent,
@@ -103,7 +110,7 @@ enum Command {
 enum SetupAgent {
     /// Merge the hooks into Claude Code's settings.json ($CLAUDE_CONFIG_DIR or ~/.claude)
     Claude,
-    /// Merge the hooks into Codex's hooks.json ($CODEX_HOME or ~/.codex)
+    /// Remove obsolete Codex hooks; status is observed directly from each terminal
     Codex,
     /// Add the hooks to Antigravity's ~/.gemini/config/hooks.json
     Agy,
@@ -155,6 +162,7 @@ enum SortArg {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
+        Some(Command::Observe { socket }) => capture::observe(&socket),
         Some(Command::SetStatus { status }) => hook(|| set_status(status)),
         Some(Command::Register) => hook(register),
         Some(Command::Next { status }) => jump(&statuses(status)),
@@ -210,7 +218,8 @@ fn statuses(arguments: Vec<NotifyStatus>) -> Vec<Status> {
 }
 
 fn jump(statuses: &[Status]) -> Result<()> {
-    let agents = reconcile(load_states(&agents_dir()?), &live_panes()?).agents;
+    let mut agents = reconcile(load_states(&agents_dir()?), &live_panes()?).agents;
+    expire_observations(&mut agents, now());
     let current = tmux(&["display-message", "-p", "#{pane_id}"]).unwrap_or_default();
     match next_agent(&agents, statuses, &current) {
         Some(agent) => tmux(&["switch-client", "-t", &agent.pane_id]).map(drop),
@@ -222,7 +231,8 @@ fn jump(statuses: &[Status]) -> Result<()> {
 }
 
 fn list(json: bool) -> Result<()> {
-    let agents = reconcile(load_states(&agents_dir()?), &live_panes()?).agents;
+    let mut agents = reconcile(load_states(&agents_dir()?), &live_panes()?).agents;
+    expire_observations(&mut agents, now());
     if json {
         println!("{}", serde_json::to_string_pretty(&agents)?);
         return Ok(());
@@ -241,6 +251,9 @@ fn list(json: bool) -> Result<()> {
 }
 
 fn hook(run: impl FnOnce() -> Result<()>) -> Result<()> {
+    if std::env::var_os("TMUX_PANE").is_none() || from_codex(std::process::id(), &process_table()) {
+        return Ok(());
+    }
     if let Err(error) = run() {
         eprintln!("tmux-aside-agents: {error:#}");
     }
@@ -257,7 +270,14 @@ fn set_status(status: StatusArg) -> Result<()> {
         StatusArg::Done => Some(Status::Done),
         StatusArg::Clear => {
             if let Ok(pane) = std::env::var("TMUX_PANE") {
-                let _ = std::fs::remove_file(state_file(&agents_dir()?, &pane));
+                let path = state_file(&agents_dir()?, &pane);
+                let observed = std::fs::read(&path)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<AgentState>(&bytes).ok())
+                    .is_some_and(|state| state.command == "codex" || state.terminal.is_some());
+                if !observed {
+                    let _ = std::fs::remove_file(path);
+                }
             }
             return Ok(());
         }
@@ -295,6 +315,14 @@ fn record(status: Option<Status>, background: bool) -> Result<()> {
     let [pid, command, path, window] = fields[..] else {
         bail!("unexpected pane info: {info}");
     };
+    let command = if command == "tmux-aside" {
+        pane_process(pid.parse()?, command, &process_table()).0
+    } else {
+        command.to_string()
+    };
+    if matches!(command.as_str(), "tmux-aside" | "codex") {
+        return Ok(());
+    }
     let dir = agents_dir()?;
     std::fs::create_dir_all(&dir)?;
     let file = state_file(&dir, &pane);
@@ -326,6 +354,8 @@ fn record(status: Option<Status>, background: bool) -> Result<()> {
         stalled: false,
         inferred: false,
         background,
+        ready: status == Some(Status::Done),
+        terminal: None,
     };
     save(&dir, &state)
 }
@@ -345,10 +375,13 @@ fn run_plugin(
             features: vec![],
         },
     )?;
-    std::thread::spawn(|| {
+    let closed = Arc::new(AtomicBool::new(false));
+    let input_closed = closed.clone();
+    std::thread::spawn(move || {
         for _ in std::io::stdin().lock().lines() {}
-        std::process::exit(0);
+        input_closed.store(true, Ordering::Relaxed);
     });
+    let mut captures = capture::Captures::new()?;
     let dir = agents_dir()?;
     let branches = Arc::new(Mutex::new(HashMap::new()));
     let (refresh, refresh_requests) = mpsc::channel::<()>();
@@ -393,7 +426,7 @@ fn run_plugin(
     let mut last = String::new();
     let mut seen: Option<HashMap<String, Option<Status>>> = None;
     let mut known_panes: Vec<String> = Vec::new();
-    loop {
+    while !closed.load(Ordering::Relaxed) {
         let current = branches.lock().unwrap().clone();
         let mut panes: Vec<String> = load_states(&dir)
             .into_iter()
@@ -413,13 +446,21 @@ fn run_plugin(
                 }
                 drop(diffs);
                 let now = now();
+                let mut observations = captures.poll(&live, now);
+                for agent in agents.iter_mut().filter(|agent| agent.command == "codex") {
+                    if let Some(observation) = observations.remove(&agent.pane_id) {
+                        apply_observation(agent, observation, now);
+                        save(&dir, agent)?;
+                    }
+                }
                 let watched: Vec<String> = agents
                     .iter()
                     .filter(|agent| {
-                        agent.inferred
-                            || (stall_after.is_some()
-                                && agent.status == Some(Status::Working)
-                                && !agent.background)
+                        agent.command != "codex"
+                            && (agent.inferred
+                                || (stall_after.is_some()
+                                    && agent.status == Some(Status::Working)
+                                    && !agent.background))
                     })
                     .map(|agent| agent.pane_id.clone())
                     .collect();
@@ -448,6 +489,12 @@ fn run_plugin(
                 }
                 if let Some(seen) = &seen {
                     for agent in entered(seen, &agents, &notify.statuses) {
+                        if live
+                            .iter()
+                            .any(|pane| pane.pane_id == agent.pane_id && pane.viewed)
+                        {
+                            continue;
+                        }
                         send_notification(
                             &notify.via,
                             notification(&notify.message, agent, options.language),
@@ -482,6 +529,7 @@ fn run_plugin(
         }
         std::thread::sleep(POLL);
     }
+    Ok(())
 }
 
 /// When the visible content of each watched pane last changed, from hashes of its captures.
@@ -510,10 +558,14 @@ impl Screens {
     }
 }
 
-/// Agents of live panes, acknowledging the waiting or done ones being viewed, forgetting the
+/// Agents of live panes, acknowledging the done ones being viewed, forgetting the
 /// ones whose pane is gone and adding panes that run one of the `detect` commands.
 fn current_agents(dir: &Path, live: &[LivePane], detect: &[String]) -> Result<Vec<AgentState>> {
     let mut result = reconcile(load_states(dir), live);
+    for pane in &result.dropped {
+        let _ = std::fs::remove_file(state_file(dir, pane));
+    }
+
     for pane in live.iter().filter(|pane| detect.contains(&pane.command)) {
         if result
             .agents
@@ -540,13 +592,12 @@ fn current_agents(dir: &Path, live: &[LivePane], detect: &[String]) -> Result<Ve
             stalled: false,
             inferred: true,
             background: false,
+            ready: false,
+            terminal: None,
         };
         std::fs::create_dir_all(dir)?;
         save(dir, &agent)?;
         result.agents.push(agent);
-    }
-    for pane in &result.dropped {
-        let _ = std::fs::remove_file(state_file(dir, pane));
     }
     for agent in &mut result.agents {
         agent.project = project_name(Path::new(&agent.workdir));
@@ -681,8 +732,20 @@ fn git(dir: &str, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+fn process_table() -> String {
+    Process::new("ps")
+        .args(["-axo", "pid=,ppid=,comm="])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default()
+}
+
 fn live_panes() -> Result<Vec<LivePane>> {
+    let server = tmux(&["display-message", "-p", "#{socket_path}"])?;
     let output = tmux(&["list-panes", "-a", "-F", LIVE_PANE_FORMAT])?;
+    let processes = process_table();
     Ok(output
         .lines()
         .filter_map(|line| {
@@ -704,10 +767,13 @@ fn live_panes() -> Result<Vec<LivePane>> {
             else {
                 return None;
             };
+            let (command, agent_pid) = pane_process(pid.parse().ok()?, command, &processes);
             Some(LivePane {
+                server: server.clone(),
                 pane_id: pane_id.to_string(),
                 pane_pid: pid.parse().ok()?,
-                command: command.to_string(),
+                command,
+                agent_pid,
                 path: path.to_string(),
                 window_id: window_id.to_string(),
                 window_name: window_name.to_string(),
@@ -786,18 +852,6 @@ const CLAUDE_HOOKS: [Hook; 6] = [
     ("Stop", None, "set-status done"),
 ];
 
-const CODEX_HOOKS: [Hook; 5] = [
-    (
-        "SessionStart",
-        Some("startup|resume|clear|fork"),
-        "register",
-    ),
-    ("UserPromptSubmit", None, "set-status working"),
-    ("PermissionRequest", None, "set-status waiting"),
-    ("PostToolUse", None, "set-status working"),
-    ("Stop", None, "set-status done"),
-];
-
 /// Where an agent's hooks live: its folder, file, name and a note on when they apply.
 fn hooks_file(agent: SetupAgent) -> Result<(PathBuf, &'static str, &'static str, &'static str)> {
     Ok(match agent {
@@ -811,7 +865,7 @@ fn hooks_file(agent: SetupAgent) -> Result<(PathBuf, &'static str, &'static str,
             config_dir("CODEX_HOME", ".codex")?,
             "hooks.json",
             "Codex",
-            "Codex skips them until you trust them: run /hooks in a new Codex session.",
+            "Codex status is observed from its terminal; no status hooks are needed.",
         ),
         SetupAgent::Agy => (
             home_dir()?.join(".gemini").join("config"),
@@ -824,6 +878,11 @@ fn hooks_file(agent: SetupAgent) -> Result<(PathBuf, &'static str, &'static str,
 
 fn setup(agent: SetupAgent) -> Result<()> {
     let (dir, file, name, note) = hooks_file(agent)?;
+    if matches!(agent, SetupAgent::Codex) {
+        uninstall(agent)?;
+        println!("{note}");
+        return Ok(());
+    }
     let path = dir.join(file);
     let existing = match std::fs::read_to_string(&path) {
         Ok(content) => Some(content),
@@ -845,7 +904,7 @@ fn setup(agent: SetupAgent) -> Result<()> {
     let exe = format!("'{}'", exe.replace('\'', "'\\''"));
     match agent {
         SetupAgent::Claude => merge_hooks(&mut settings, file, &CLAUDE_HOOKS, &exe)?,
-        SetupAgent::Codex => merge_hooks(&mut settings, file, &CODEX_HOOKS, &exe)?,
+        SetupAgent::Codex => unreachable!("Codex cleanup returned above"),
         SetupAgent::Agy => set_agy_hooks(&mut settings, file, &exe)?,
     }
 
@@ -976,4 +1035,41 @@ fn merge_hooks(settings: &mut Value, file: &str, wanted: &[Hook], exe: &str) -> 
         }
     }
     Ok(())
+}
+
+fn apply_observation(agent: &mut AgentState, observation: TerminalObservation, now: u64) {
+    let changed = agent.terminal.as_ref().is_none_or(|previous| {
+        previous.process_id != observation.process_id
+            || previous.server != observation.server
+            || previous.revision != observation.revision
+            || previous.state != observation.state
+    });
+    if changed {
+        let status = observation.state.status();
+        if agent.status != status {
+            agent.status_ts = now;
+        }
+        agent.status = status;
+        agent.activity_ts = now;
+    }
+    agent.inferred = false;
+    agent.background = false;
+    agent.ready = false;
+    agent.terminal = Some(observation);
+}
+
+fn expire_observations(agents: &mut [AgentState], now: u64) {
+    for agent in agents.iter_mut().filter(|agent| agent.command == "codex") {
+        if agent
+            .terminal
+            .as_ref()
+            .is_none_or(|state| now.saturating_sub(state.checked_at) > 3)
+        {
+            agent.status = None;
+            agent.ready = false;
+            if let Some(state) = &mut agent.terminal {
+                state.state = TerminalStatus::Unknown;
+            }
+        }
+    }
 }

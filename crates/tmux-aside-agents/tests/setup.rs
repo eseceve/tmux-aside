@@ -203,54 +203,25 @@ fn invalid_json_is_left_untouched() {
 }
 
 #[test]
-fn codex_hooks_cover_every_status_and_ask_to_be_trusted() {
+fn codex_setup_removes_obsolete_status_hooks_and_preserves_other_commands() {
     let codex = AgentDir::codex();
-
+    codex.write(&json!({"hooks": {
+        "Stop": [{"hooks": [
+            {"type":"command", "command":"workmux set-window-status done"},
+            {"type":"command", "command":"'/old/tmux-aside-agents' set-status done"}
+        ]}],
+        "SessionStart": [{"hooks": [{"type":"command", "command":"tmux-aside-agents register"}]}]
+    }}));
     let stdout = codex.setup();
-
-    let settings = codex.read();
-    let expected = [
-        ("SessionStart", "register"),
-        ("UserPromptSubmit", "set-status working"),
-        ("PermissionRequest", "set-status waiting"),
-        ("PostToolUse", "set-status working"),
-        ("Stop", "set-status done"),
-    ];
-    for (event, arguments) in expected {
-        assert_eq!(
-            commands(&settings, event),
-            [format!("'{}' {arguments}", exe())],
-            "{event}"
-        );
-    }
-    assert_eq!(
-        settings["hooks"]["SessionStart"][0]["matcher"],
-        "startup|resume|clear|fork"
-    );
-    assert!(stdout.contains("/hooks"), "{stdout}");
-}
-
-#[test]
-fn codex_hooks_are_added_after_the_existing_ones() {
-    let codex = AgentDir::codex();
-    codex.write(&json!({
-        "hooks": {
-            "Stop": [{ "hooks": [{ "type": "command", "command": "workmux set-window-status done" }] }]
-        }
-    }));
-
-    codex.setup();
-    let first = std::fs::read_to_string(codex.settings()).unwrap();
-    codex.setup();
-
-    assert_eq!(std::fs::read_to_string(codex.settings()).unwrap(), first);
+    assert!(stdout.contains("no status hooks are needed"));
     assert_eq!(
         commands(&codex.read(), "Stop"),
-        [
-            "workmux set-window-status done".to_string(),
-            format!("'{}' set-status done", exe())
-        ]
+        ["workmux set-window-status done"]
     );
+    assert!(commands(&codex.read(), "SessionStart").is_empty());
+    let first = codex.read();
+    codex.setup();
+    assert_eq!(codex.read(), first);
 }
 
 #[test]
@@ -344,4 +315,11 @@ fn antigravitys_hook_group_is_removed_alone() {
     assert!(tmux_aside_agents::remove_agy_hooks(&mut settings));
 
     assert_eq!(settings, serde_json::json!({"mine": {}}));
+}
+
+#[test]
+fn codex_setup_does_not_create_an_unused_hooks_file() {
+    let codex = AgentDir::codex();
+    codex.setup();
+    assert!(!codex.settings().exists());
 }

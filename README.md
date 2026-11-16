@@ -59,7 +59,7 @@ Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `
    | Jump to the agent waiting (or done) the longest | `prefix + W`, `N`, `G` |
    | Reload the config | `prefix + R`, `O`, `Q` |
 
-   The bindings go to a marked block in your tmux config, which a later run replaces, and take effect right away when run inside tmux. For Claude Code it runs `tmux-aside-agents setup claude` (status hooks) and `tmux-aside-usage setup claude` (wraps your `statusLine` to record plan usage), which keep a `settings.json.bak` copy and apply to sessions started afterwards. For Codex it runs `tmux-aside-agents setup codex`, which merges the status hooks into `~/.codex/hooks.json` (or `$CODEX_HOME`); Codex skips new hooks until you trust them with `/hooks`. For Antigravity it runs `tmux-aside-agents setup agy`, which adds them to `~/.gemini/config/hooks.json`; agy reports working and done, but no hook tells when it waits for you. Pass `--yes` to take the first key of each action and every hook, or give them as flags (`--toggle`, `--focus`, `--next`, `--reload`, `--hooks claude,codex,agy`, `--no-hooks`; `-` leaves an action unbound).
+   The bindings go to a marked block in your tmux config, which a later run replaces, and take effect right away when run inside tmux. For Claude Code it runs `tmux-aside-agents setup claude` (status hooks) and `tmux-aside-usage setup claude` (wraps your `statusLine` to record plan usage), which keep a `settings.json.bak` copy and apply to sessions started afterwards. For Codex it runs `tmux-aside-agents setup codex`, which removes obsolete tmux-aside status hooks from `~/.codex/hooks.json` (or `$CODEX_HOME`); Codex status is observed directly from each terminal. For Antigravity it runs `tmux-aside-agents setup agy`, which adds them to `~/.gemini/config/hooks.json`; agy reports working and done, but no hook tells when it waits for you. Pass `--yes` to take the first key of each action and every hook, or give them as flags (`--toggle`, `--focus`, `--next`, `--reload`, `--hooks claude,codex,agy`, `--no-hooks`; `-` leaves an action unbound).
 3. Turn the sidebar on with your toggle key, or `tmux-aside on`.
 
 ## Commands
@@ -98,11 +98,11 @@ ai: codex          # claude, codex or agy (Antigravity); the config's `ai`, or c
 Implement ${task} and open a pull request.
 ```
 
-Agents are Claude Code by default; set `ai: codex` or `ai: agy` at the top of the config to change it, and a template's `ai` wins over it. Only AIs with tmux-aside status hooks are supported, because the watcher nudges an agent only when its hooks say it is done.
+Agents are Claude Code by default; set `ai: codex` or `ai: agy` at the top of the config to change it, and a template's `ai` wins over it. The watcher automatically nudges Claude Code and Antigravity only after a trusted completion hook. Codex terminal observations provide sidebar status, but do not authorize automatic nudges.
 
 tmux-aside ships an `implement` template, an `adopt` one for `--pr`, a `qa` one for `tmux-aside qa` and a `fix` one for `tmux-aside fix`. Your own go in `$XDG_CONFIG_HOME/tmux-aside/templates/NAME.md` (`~/.config/tmux-aside/templates/` by default) and replace a bundled one with the same name.
 
-To take over a pull request that was opened by hand, or whose agent was lost, run `tmux-aside launch ~/src/app --template adopt --pr https://github.com/org/app/pull/12`: it checks out the pull request's branch in a new worktree (reusing the local branch when there is one) and the task reference is the pull request's URL. The pull request must be open and belong to the clone's `origin` on GitHub; pull requests from forks are not supported. When an agent is already working on a pull request, let it register itself instead: `tmux-aside follow https://github.com/org/app/pull/12`, run from its pane (an agent can run it itself), records that agent with the worktree it runs in, and creates nothing. It needs the agent's tmux-aside hooks, so that its status is known.
+To take over a pull request that was opened by hand, or whose agent was lost, run `tmux-aside launch ~/src/app --template adopt --pr https://github.com/org/app/pull/12`: it checks out the pull request's branch in a new worktree (reusing the local branch when there is one) and the task reference is the pull request's URL. The pull request must be open and belong to the clone's `origin` on GitHub; pull requests from forks are not supported. When an agent is already working on a pull request, let it register itself instead: `tmux-aside follow https://github.com/org/app/pull/12`, run from its pane (an agent can run it itself), records that agent with the worktree it runs in, and creates nothing. Automatic nudges require the agent's tmux-aside completion hooks.
 
 Add `--group NAME` to put launches that belong together in a Group, such as the pull requests of one task across repositories, or those that must be tested together: the watcher shows them together and runs their QA once, for all of them.
 
@@ -210,7 +210,13 @@ Run any plugin with `--help` for every option.
 
 ### agents
 
-Lists AI coding agents running in tmux panes. Claude Code, Codex and Antigravity report their status through hooks (`tmux-aside-agents setup claude`, `setup codex`, `setup agy`); panes running `claude`, `codex` or `agy` (Antigravity) are listed even before a hook reports them, and other agents can be found by their command with `--detect`. Each row names the agent (`CC`, `Codex`, `Agy`, or the command of a detected one), followed by its pane title (`CC: Fix the login flow`). Runs best with `mode: stream`.
+Lists AI coding agents running in tmux panes. Claude Code and Antigravity report status through hooks (`tmux-aside-agents setup claude`, `setup agy`); Codex reports it through terminal OSC 7501; panes running `claude`, `codex` or `agy` (Antigravity) are listed even before a hook reports them, and other agents can be found by their command with `--detect`. Each row names the agent (`CC`, `Codex`, `Agy`, or the command of a detected one), followed by its pane title (`CC: Fix the login flow`). Runs best with `mode: stream`.
+
+Waiting stays visible until the agent reports another status; looking at its pane only acknowledges a completed turn. Agents started through `tmux-aside launch` are detected behind the launcher process too.
+
+Codex starts and resumes with its default runtime, including the shared daemon. The agents plugin reads OSC 7501 from each client's own pane with `tmux pipe-pane`, binding the observation to the tmux server and client process. Tested with Codex 0.169.0. Permission and question prompts appear as waiting independently across sessions. `tmux-aside-agents setup codex` removes obsolete status hooks; the plugin also ignores legacy Codex hook writes.
+
+An observer attached after a status was emitted starts at **status unknown** until the next transition. A restart, disconnection, unsupported Codex version or an existing `pipe-pane` consumer also leaves status unknown; the plugin preserves other consumers. It retains parsed status only, not terminal transcripts. Codex errors are shown explicitly, and idle is not treated as a completed turn. These terminal signals are advisory and contain no conversation identity, so they never authorize Watcher nudges. Claude Code and Antigravity retain their hook-based completion behavior.
 
 - `--group project|none`: a group per project, or one list ordered by status across projects.
 - `--sort priority|alphabetical|window`: priority puts agents waiting for you first; window follows the order of the tmux windows, so `tmux move-window` reorders the list.
@@ -269,7 +275,7 @@ To act once pull requests are in production, such as updating their tasks, set `
 Update the status of the tasks ${task}, whose pull requests ${urls} are in production.
 ```
 
-When the pull request has conflicts, or unresolved review comments, the watcher types a Nudge into its agent asking it to resolve or answer them. It types only while the agent is idle (done, not working or waiting for you, with its status reported by the [agents](#agents) hooks) and you are not looking at its pane, and at most once per stage and head commit of the pull request, so a new push allows it again.
+When the pull request has conflicts, or unresolved review comments, the watcher types a Nudge into its agent asking it to resolve or answer them. It types only after trusted hook completion (including a completion you have acknowledged), never from unknown, inferred or Codex terminal status and you are not looking at its pane, and at most once per stage and head commit of the pull request, so a new push allows it again.
 
 Once the pull request is merged or closed, the watcher removes the launch's worktree and closes the agent's pane, which closes its window unless you split it. The branch is kept; files git ignores, such as `.env` files and build outputs, are removed with the worktree. When uncommitted changes or commits that are on no remote branch would be lost, it removes nothing and the row warns in yellow (`QA · uncommitted changes kept in the worktree`) until you deal with them, and stays even once deployed or closed.
 

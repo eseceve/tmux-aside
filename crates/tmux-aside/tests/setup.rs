@@ -273,3 +273,10 @@ fn a_key_tmux_rejects_changes_nothing() {
     assert!(server.binding("prefix", "B").contains("toggle"));
     assert!(server.binding("prefix", "R").contains("reload"));
 }
+
+#[test]
+fn codex_sessions_start_and_resume_with_the_default_runtime() {
+    use tmux_aside::setup::Ai;
+    assert_eq!(Ai::Codex.start_arguments("work"), ["work"]);
+    assert_eq!(Ai::Codex.resume_arguments(), ["resume", "--last"]);
+}

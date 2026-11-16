@@ -392,22 +392,33 @@ pub struct LivePane {
 }
 
 /// What an agent is doing for a Criterion's [`Question`]: `idle` once its turn is over, `busy`
-/// while it works or waits for the user, and `None` when its pane no longer runs it.
+/// while it works or waits for the user, and `None` without trusted hook evidence.
 pub fn activity(state: &AgentState, pane: &LivePane) -> Option<&'static str> {
-    if state.pane_pid != pane.pid || state.command != pane.command {
+    if state.pane_pid != pane.pid
+        || state.command != pane.command
+        || state.inferred
+        || state.command == "codex"
+        || state.terminal.is_some()
+    {
         return None;
     }
     match state.status {
         Some(Status::Working | Status::Waiting) => Some("busy"),
-        _ => Some("idle"),
+        Some(Status::Done) => Some("idle"),
+        None if state.ready => Some("idle"),
+        None => None,
     }
 }
 
-/// Whether the agent can take a Nudge: it is neither working nor waiting for the user, its
+/// Whether the agent can take a Nudge: a trusted hook completed its turn, its
 /// pane still runs it (the process and command its hooks registered), and nobody is looking
 /// at the pane, where they may be typing.
 pub fn is_idle(state: &AgentState, pane: &LivePane) -> bool {
-    !matches!(state.status, Some(Status::Working | Status::Waiting))
+    !state.inferred
+        && state.command != "codex"
+        && state.terminal.is_none()
+        && (state.status == Some(Status::Done) || state.ready)
+        && !matches!(state.status, Some(Status::Working | Status::Waiting))
         && state.pane_pid == pane.pid
         && state.command == pane.command
         && !pane.viewed

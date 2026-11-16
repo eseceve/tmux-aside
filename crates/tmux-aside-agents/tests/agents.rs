@@ -33,6 +33,8 @@ fn state(
         stalled: false,
         inferred: false,
         background: false,
+        ready: false,
+        terminal: None,
     }
 }
 
@@ -54,8 +56,10 @@ fn options(sort: Sort, elapsed: bool) -> RowOptions {
 
 fn live(pane: &str) -> LivePane {
     LivePane {
+        server: "test-server".into(),
         pane_id: pane.to_string(),
         pane_pid: 100,
+        agent_pid: Some(100),
         command: "claude".to_string(),
         title: String::new(),
         path: String::new(),
@@ -114,7 +118,7 @@ fn drops_agents_whose_pane_is_gone_recycled_or_no_longer_runs_the_agent() {
 }
 
 #[test]
-fn viewing_a_waiting_or_done_agent_acknowledges_it() {
+fn viewing_an_agent_only_acknowledges_done_and_preserves_waiting() {
     let viewed = |pane: &str| LivePane {
         viewed: true,
         ..live(pane)
@@ -130,8 +134,11 @@ fn viewing_a_waiting_or_done_agent_acknowledges_it() {
     );
 
     let statuses: Vec<Option<Status>> = result.agents.iter().map(|agent| agent.status).collect();
-    assert_eq!(statuses, [None, None, Some(Status::Working)]);
-    assert_eq!(result.acknowledged, ["%1", "%2"]);
+    assert_eq!(
+        statuses,
+        [Some(Status::Waiting), None, Some(Status::Working)]
+    );
+    assert_eq!(result.acknowledged, ["%2"]);
 }
 
 #[test]
@@ -852,4 +859,68 @@ fn next_says_which_statuses_had_no_agents_in_each_language() {
         (messages(Language::Es).no_agents_in)(&statuses),
         "sin agentes esperando o listos"
     );
+}
+
+#[test]
+fn drops_sidebar_panels_even_when_the_stored_process_matches() {
+    let mut sidebar = state("%1", "home", "aside", None, 0);
+    sidebar.command = "tmux-aside".to_string();
+    let pane = LivePane {
+        command: "tmux-aside".to_string(),
+        ..live("%1")
+    };
+    let result = reconcile(vec![sidebar], &[pane]);
+    assert!(result.agents.is_empty());
+    assert_eq!(result.dropped, ["%1"]);
+}
+
+#[test]
+fn terminal_observations_cannot_follow_a_restarted_client_or_another_tmux_server() {
+    use tmux_aside_agents::terminal::{TerminalObservation, TerminalStatus};
+    let mut agent = state("%1", "api", "w", Some(Status::Waiting), 0);
+    agent.command = "codex".into();
+    agent.terminal = Some(TerminalObservation {
+        state: TerminalStatus::Waiting,
+        process_id: 100,
+        server: "test-server".into(),
+        revision: 1,
+        checked_at: 10,
+    });
+    let pane = LivePane {
+        command: "codex".into(),
+        ..live("%1")
+    };
+    assert_eq!(
+        reconcile(vec![agent.clone()], std::slice::from_ref(&pane))
+            .agents
+            .len(),
+        1
+    );
+    for changed in [
+        LivePane {
+            agent_pid: Some(101),
+            ..pane.clone()
+        },
+        LivePane {
+            server: "other-server".into(),
+            ..pane
+        },
+    ] {
+        assert!(reconcile(vec![agent.clone()], &[changed]).agents.is_empty());
+    }
+}
+
+#[test]
+fn acknowledging_a_completed_hook_turn_preserves_its_readiness() {
+    let mut agent = state("%1", "api", "w", Some(Status::Done), 0);
+    agent.ready = true;
+    let result = reconcile(
+        vec![agent],
+        &[LivePane {
+            viewed: true,
+            ..live("%1")
+        }],
+    );
+    assert_eq!(result.agents[0].status, None);
+    assert!(result.agents[0].ready);
 }

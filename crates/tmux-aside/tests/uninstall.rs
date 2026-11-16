@@ -121,11 +121,7 @@ fn uninstall_after_setup_leaves_every_config_as_it_was() {
     let installed = home.read("claude/settings.json").unwrap();
     assert!(installed.contains("tmux-aside-agents"), "{installed}");
     assert!(installed.contains("tmux-aside-usage"), "{installed}");
-    assert!(
-        home.read("codex/hooks.json")
-            .unwrap()
-            .contains("tmux-aside-agents")
-    );
+    assert!(!home.path("codex/hooks.json").exists());
 
     home.run(&["uninstall", "--yes"]);
 

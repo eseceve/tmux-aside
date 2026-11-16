@@ -797,9 +797,18 @@ fn live_agent(pane: &str) -> Option<(AgentState, LivePane)> {
     let [pid, command, pane_active, window_active, attached] = fields[..] else {
         return None;
     };
+    let processes = std::process::Command::new("ps")
+        .args(["-axo", "pid=,ppid=,comm="])
+        .output()
+        .ok()?;
+    let (command, _) = tmux_aside_agents::processes::pane_process(
+        pid.parse().ok()?,
+        command,
+        &String::from_utf8_lossy(&processes.stdout),
+    );
     let live = LivePane {
         pid: pid.parse().ok()?,
-        command: command.to_string(),
+        command,
         viewed: pane_active == "1" && window_active == "1" && attached != "0",
     };
     Some((state, live))

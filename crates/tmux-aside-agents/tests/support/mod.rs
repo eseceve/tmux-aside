@@ -72,6 +72,11 @@ impl Tmux {
         ]);
         tmux.socket = tmux.tmux(&["display-message", "-p", "#{socket_path}"]);
         tmux.fake_gh("[]");
+        // Hook tests must not inherit the coding agent running this test suite.
+        let ps = tmux.dir.join("bin/ps");
+        std::fs::write(&ps, "#!/bin/sh\nexit 0\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(ps, std::fs::Permissions::from_mode(0o755)).unwrap();
         tmux
     }
 

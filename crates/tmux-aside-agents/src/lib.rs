@@ -1,3 +1,6 @@
+pub mod processes;
+pub mod terminal;
+
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -48,6 +51,8 @@ pub struct Messages {
     pub waiting: &'static str,
     pub done: &'static str,
     pub stalled: &'static str,
+    pub unknown: &'static str,
+    pub error: &'static str,
     pub go_to_agent: &'static str,
     pub open_pull_request: &'static str,
 }
@@ -63,6 +68,8 @@ const EN: Messages = Messages {
     waiting: "waiting",
     done: "done",
     stalled: "stalled",
+    unknown: "status unknown",
+    error: "error",
     go_to_agent: "go to the agent",
     open_pull_request: "open its pull request",
 };
@@ -85,6 +92,8 @@ const ES: Messages = Messages {
     waiting: "esperando",
     done: "listo",
     stalled: "detenido",
+    unknown: "estado desconocido",
+    error: "error",
     go_to_agent: "ir al agente",
     open_pull_request: "abrir su pull request",
 };
@@ -133,6 +142,12 @@ pub struct AgentState {
     /// Working only because background subagents it started are still running.
     #[serde(default)]
     pub background: bool,
+    /// A completed hook turn remains ready after its visual acknowledgment.
+    #[serde(default)]
+    pub ready: bool,
+    /// Advisory terminal observation; never a verified conversation binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<terminal::TerminalObservation>,
 }
 
 /// Lines added and removed by a branch, committed or not, since it left its base.
@@ -189,7 +204,11 @@ pub enum Grouping {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LivePane {
     pub pane_id: String,
+    /// tmux server socket, so a record from another server cannot match this pane.
+    pub server: String,
     pub pane_pid: u32,
+    /// Actual agent process, distinct from a long-lived pane shell or launcher.
+    pub agent_pid: Option<u32>,
     pub command: String,
     pub title: String,
     pub path: String,
@@ -214,12 +233,12 @@ pub struct Reconciliation {
     pub agents: Vec<AgentState>,
     /// Panes whose state no longer belongs to a live agent.
     pub dropped: Vec<String>,
-    /// Panes whose waiting or done status was cleared because the user viewed them.
+    /// Panes whose done status was cleared because the user viewed them.
     pub acknowledged: Vec<String>,
 }
 
 /// Matches stored states against live panes: drops agents whose pane is gone, was recycled
-/// (different process) or no longer runs the agent, and acknowledges waiting or done agents
+/// (different process) or no longer runs the agent, and acknowledges done agents
 /// whose pane is being viewed.
 pub fn reconcile(states: Vec<AgentState>, live: &[LivePane]) -> Reconciliation {
     let mut result = Reconciliation {
@@ -228,10 +247,17 @@ pub fn reconcile(states: Vec<AgentState>, live: &[LivePane]) -> Reconciliation {
         acknowledged: Vec::new(),
     };
     for mut state in states {
+        if state.command == "tmux-aside" {
+            result.dropped.push(state.pane_id);
+            continue;
+        }
         let pane = live.iter().find(|pane| {
             pane.pane_id == state.pane_id
                 && pane.pane_pid == state.pane_pid
                 && pane.command == state.command
+                && state.terminal.as_ref().is_none_or(|terminal| {
+                    pane.agent_pid == Some(terminal.process_id) && pane.server == terminal.server
+                })
         });
         let Some(pane) = pane else {
             result.dropped.push(state.pane_id);
@@ -241,7 +267,7 @@ pub fn reconcile(states: Vec<AgentState>, live: &[LivePane]) -> Reconciliation {
         state.workdir = pane.path.clone();
         state.window_id = pane.window_id.clone();
         state.window_index = pane.window_index;
-        if pane.viewed && matches!(state.status, Some(Status::Waiting | Status::Done)) {
+        if pane.viewed && matches!(state.status, Some(Status::Done)) {
             state.status = None;
             result.acknowledged.push(state.pane_id.clone());
         }
@@ -499,6 +525,21 @@ fn row(
     let elapsed_time = || format_elapsed(now.saturating_sub(agent.status_ts));
     let pr = branch.and_then(|branch| branch.pr.as_ref());
     let (detail, detail_tone) = match (agent.status, pr) {
+        _ if agent.command == "codex"
+            && agent
+                .terminal
+                .as_ref()
+                .is_none_or(|t| t.state == terminal::TerminalStatus::Unknown) =>
+        {
+            (Some(messages.unknown.to_string()), Tone::Muted)
+        }
+        _ if agent
+            .terminal
+            .as_ref()
+            .is_some_and(|t| t.state == terminal::TerminalStatus::Error) =>
+        {
+            (Some(messages.error.to_string()), Tone::Danger)
+        }
         (Some(Status::Working), _) if agent.stalled => {
             (Some(messages.stalled.to_string()), Tone::Danger)
         }
