@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use tmux_aside::i18n::Language;
 use tmux_aside::setup::{self, Action, Ai};
 use tmux_aside::width::Width;
@@ -17,6 +17,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Print shell completion code to stdout
+    Completion {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
     /// Show the sidebar in every window
     On {
         /// Width in columns (N) or percent of the window (N%)
@@ -89,6 +95,7 @@ enum Command {
         #[command(flatten)]
         agent: launch::AgentOptions,
         /// Path to the repository clone
+        #[arg(value_hint = clap::ValueHint::DirPath)]
         repository: PathBuf,
         /// Template the agent is launched with
         #[arg(long)]
@@ -239,6 +246,15 @@ impl From<AiArg> for Ai {
 
 fn main() -> Result<()> {
     match Cli::parse().command {
+        Command::Completion { shell } => {
+            clap_complete::generate(
+                shell,
+                &mut Cli::command(),
+                "tmux-aside",
+                &mut std::io::stdout(),
+            );
+            Ok(())
+        }
         Command::On { width } => sidebar::on(width),
         Command::Off => sidebar::off(),
         Command::Toggle { width } => sidebar::toggle(width),

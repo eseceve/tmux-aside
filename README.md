@@ -41,6 +41,28 @@ cargo install --locked --git https://github.com/eseceve/tmux-aside \
 
 Install only the plugins you want; `tmux-aside` finds a plugin named `NAME` as `tmux-aside-NAME` next to its own binary or in `PATH`.
 
+## Shell completion
+
+`tmux-aside completion <shell>` prints a completion script generated from the CLI definition. It includes subcommands and flags; Bash, Zsh and Fish also complete agent names and effort values. Models, task references and template names are free text; repository arguments complete directories. Supported shells: Bash, Zsh, Fish, PowerShell and Elvish. Generation does not start tmux or an agent.
+
+For Zsh, save the script in a directory on `$fpath` before `compinit` runs. With Oh My Zsh:
+
+```sh
+mkdir -p "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/completions"
+tmux-aside completion zsh > "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/completions/_tmux-aside"
+```
+
+Ensure that directory is in `fpath` before loading Oh My Zsh, then open a new shell. For the current Zsh session after `compinit`, use `source <(tmux-aside completion zsh)`.
+
+For Bash, add `source <(tmux-aside completion bash)` to `~/.bashrc`. For Fish:
+
+```sh
+mkdir -p ~/.config/fish/completions
+tmux-aside completion fish > ~/.config/fish/completions/tmux-aside.fish
+```
+
+Regenerate saved completion files after upgrading the CLI to include new commands and flags.
+
 ## Quick start
 
 1. Copy the [example config](examples/config.yaml) to `~/.config/tmux-aside/config.yaml` (or `$XDG_CONFIG_HOME/tmux-aside/config.yaml`) and edit it. If your team has a [Pack](#packs), skip this: `tmux-aside setup --pack` writes a config whose sidebar comes from the Pack.

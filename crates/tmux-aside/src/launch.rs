@@ -36,7 +36,7 @@ pub struct AgentOptions {
     #[arg(long)]
     pub model: Option<String>,
     /// Reasoning effort supported by the selected agent
-    #[arg(long)]
+    #[arg(long, value_parser = ["none", "minimal", "low", "medium", "high", "xhigh", "max"])]
     pub effort: Option<String>,
 }
 
