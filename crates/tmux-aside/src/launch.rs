@@ -26,6 +26,73 @@ const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
 const QA_TEMPLATE: &str = "qa";
 const FIX_TEMPLATE: &str = "fix";
 
+/// Per-invocation overrides for the template and configured agent defaults.
+#[derive(Clone, Debug, Default, clap::Args)]
+pub struct AgentOptions {
+    /// Agent to run (overrides template and configuration)
+    #[arg(long, value_parser = ["claude", "codex", "agy"])]
+    pub agent: Option<String>,
+    /// Model name passed to the selected agent
+    #[arg(long)]
+    pub model: Option<String>,
+    /// Reasoning effort supported by the selected agent
+    #[arg(long)]
+    pub effort: Option<String>,
+}
+
+/// Resolved settings preserved when a launch is resumed.
+#[derive(Clone, Debug)]
+pub struct AgentSettings {
+    pub ai: Ai,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
+impl AgentSettings {
+    /// Validates settings before creating a worktree or starting an agent.
+    pub fn validate(&self) -> Result<()> {
+        if self
+            .model
+            .as_ref()
+            .is_some_and(|model| model.trim().is_empty())
+        {
+            bail!("model must not be empty");
+        }
+        if let Some(effort) = &self.effort {
+            let supported: &[&str] = match self.ai {
+                Ai::Codex => &["none", "minimal", "low", "medium", "high", "xhigh"],
+                Ai::Claude => &["low", "medium", "high", "max"],
+                Ai::Agy => &["low", "medium", "high", "xhigh", "max"],
+            };
+            if !supported.contains(&effort.as_str()) {
+                bail!(
+                    "unsupported effort '{effort}' for {}; expected {}",
+                    self.ai.program(),
+                    supported.join(", ")
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Native CLI arguments for model and effort, without altering permissions.
+    pub fn arguments(&self) -> Vec<String> {
+        let mut args = Vec::new();
+        if let Some(model) = &self.model {
+            args.extend(["--model".into(), model.clone()]);
+        }
+        if let Some(effort) = &self.effort {
+            match self.ai {
+                Ai::Codex => {
+                    args.extend(["-c".into(), format!("model_reasoning_effort=\"{effort}\"")])
+                }
+                _ => args.extend(["--effort".into(), effort.clone()]),
+            }
+        }
+        args
+    }
+}
+
 /// The prompt an agent is launched with, into which the Task reference is filled.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Template {
@@ -33,6 +100,8 @@ pub struct Template {
     pub opens_pull_request: bool,
     /// The name of the AI the Template is launched with; the config's when unset.
     pub ai: Option<String>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
     body: String,
 }
 
@@ -42,6 +111,8 @@ struct FrontMatter {
     pull_request: bool,
     #[serde(default)]
     ai: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
 }
 
 impl Template {
@@ -63,6 +134,8 @@ impl Template {
         Ok(Template {
             opens_pull_request: front_matter.pull_request,
             ai: front_matter.ai,
+            model: front_matter.model,
+            effort: front_matter.effort,
             body: body.to_string(),
         })
     }
@@ -85,6 +158,10 @@ pub struct Launch {
     pub window: String,
     pub pane: String,
     pub ai: Ai,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     /// The Template it was launched with; none for a followed agent.
     #[serde(default)]
     pub template: Option<String>,
@@ -112,6 +189,7 @@ pub struct Launch {
 
 /// What `tmux-aside launch` was given on the command line.
 pub struct Options {
+    pub agent: AgentOptions,
     pub repository: PathBuf,
     pub template: String,
     /// The Task reference; the pull request's URL when adopting one and none is given.
@@ -212,6 +290,8 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
     let messages = language.messages();
     let template = find_template(&options.template, language)?
         .ok_or_else(|| anyhow!((messages.unknown_template)(&options.template)))?;
+    let settings = choose_agent(&template, options.agent, language)?;
+    let ai = settings.ai;
     let repository = git(&options.repository, &["rev-parse", "--show-toplevel"])
         .map(PathBuf::from)
         .map_err(|_| {
@@ -260,7 +340,6 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
     if worktree.exists() {
         bail!((messages.worktree_exists)(&worktree.display().to_string()));
     }
-    let ai = choose_ai(&template, language)?;
     let program = find_on_path(ai.program())
         .ok_or_else(|| anyhow!((messages.agent_not_found)(ai.program())))?;
     let session = current_session()?;
@@ -310,8 +389,14 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
     std::fs::create_dir_all(&directory)?;
     let prompt = directory.join(format!("{id}.prompt"));
     std::fs::write(&prompt, template.prompt(&task))?;
-    let (window, pane) =
-        open_agent_window(&session, &handle, &worktree, ai, &program, Some(&prompt))?;
+    let (window, pane) = open_agent_window(
+        &session,
+        &handle,
+        &worktree,
+        &settings,
+        &program,
+        Some(&prompt),
+    )?;
 
     let launch = Launch {
         id,
@@ -322,6 +407,8 @@ pub fn run(options: Options, language: Language) -> Result<Launch> {
         window,
         pane,
         ai,
+        model: settings.model,
+        effort: settings.effort,
         template: Some(options.template),
         task,
         opens_pull_request: pull_request.is_some() || template.opens_pull_request,
@@ -353,20 +440,35 @@ fn open_agent_window(
     session: &str,
     name: &str,
     directory: &Path,
-    ai: Ai,
+    settings: &AgentSettings,
     program: &Path,
     prompt: Option<&Path>,
 ) -> Result<(String, String)> {
+    settings.validate()?;
     let executable = std::env::current_exe()?;
     let command = [
         executable.as_path(),
         Path::new("_agent"),
         Path::new("--ai"),
-        Path::new(ai.program()),
+        Path::new(settings.ai.program()),
         Path::new("--program"),
         program,
     ]
     .into_iter()
+    .chain(
+        settings
+            .model
+            .as_ref()
+            .into_iter()
+            .flat_map(|value| [Path::new("--model"), Path::new(value)]),
+    )
+    .chain(
+        settings
+            .effort
+            .as_ref()
+            .into_iter()
+            .flat_map(|value| [Path::new("--effort"), Path::new(value)]),
+    )
     .chain(prompt)
     .map(|part| part.to_str().map(shell_quote))
     .collect::<Option<Vec<_>>>()
@@ -408,6 +510,15 @@ fn open_agent_window(
 /// is recorded for them (a discovered pull request). Each must be followed by a Launch. The
 /// Task reference lists the URLs. The QA Launch opens no pull request of its own.
 pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
+    qa_with_options(urls, AgentOptions::default(), language)
+}
+
+/// Launches QA with per-invocation agent overrides.
+pub fn qa_with_options(
+    urls: &[String],
+    options: AgentOptions,
+    language: Language,
+) -> Result<Launch> {
     let messages = language.messages();
     let template = find_template(QA_TEMPLATE, language)?
         .ok_or_else(|| anyhow!((messages.unknown_template)(QA_TEMPLATE)))?;
@@ -435,7 +546,8 @@ pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
         Some(repository) => repository,
         None => std::env::current_dir()?,
     };
-    let ai = choose_ai(&template, language)?;
+    let settings = choose_agent(&template, options, language)?;
+    let ai = settings.ai;
     let program = find_on_path(ai.program())
         .ok_or_else(|| anyhow!((messages.agent_not_found)(ai.program())))?;
     let session = current_session()?;
@@ -457,8 +569,14 @@ pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
             .replace("${passed_label}", &passed)
             .replace("${failed_label}", &failed),
     )?;
-    let (window, pane) =
-        open_agent_window(&session, &handle, &repository, ai, &program, Some(&prompt))?;
+    let (window, pane) = open_agent_window(
+        &session,
+        &handle,
+        &repository,
+        &settings,
+        &program,
+        Some(&prompt),
+    )?;
     let launch = Launch {
         id,
         branch: git(&repository, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default(),
@@ -468,6 +586,8 @@ pub fn qa(urls: &[String], language: Language) -> Result<Launch> {
         window,
         pane,
         ai,
+        model: settings.model,
+        effort: settings.effort,
         template: Some(QA_TEMPLATE.to_string()),
         task,
         opens_pull_request: false,
@@ -497,7 +617,8 @@ pub fn deployed(urls: &[String], tasks: &[String], language: Language) -> Result
     .unwrap_or_default();
     let template = find_template(&action.template, language)?
         .ok_or_else(|| anyhow!((messages.unknown_template)(&action.template)))?;
-    let ai = choose_ai(&template, language)?;
+    let settings = choose_agent(&template, AgentOptions::default(), language)?;
+    let ai = settings.ai;
     let program = find_on_path(ai.program())
         .ok_or_else(|| anyhow!((messages.agent_not_found)(ai.program())))?;
     let sorted = |values: &[String]| {
@@ -511,6 +632,7 @@ pub fn deployed(urls: &[String], tasks: &[String], language: Language) -> Result
         .replace("${urls}", &sorted(urls));
     if !action.window {
         let status = Command::new(&program)
+            .args(settings.arguments())
             .args(ai.print_arguments(&prompt))
             .stdin(Stdio::null())
             .stdout(std::io::stderr().as_fd().try_clone_to_owned()?)
@@ -535,7 +657,7 @@ pub fn deployed(urls: &[String], tasks: &[String], language: Language) -> Result
         &current_session()?,
         &handle,
         &std::env::current_dir()?,
-        ai,
+        &settings,
         &program,
         Some(&prompt_file),
     )?;
@@ -564,7 +686,11 @@ pub fn resurrect(dry_run: bool, language: Language) -> Result<String> {
             &launch.session,
             &name,
             &launch.worktree,
-            launch.ai,
+            &AgentSettings {
+                ai: launch.ai,
+                model: launch.model.clone(),
+                effort: launch.effort.clone(),
+            },
             &program,
             None,
         )?;
@@ -598,6 +724,11 @@ fn agent_alive(launch: &Launch) -> bool {
 /// for both once the fix reaches QA. A pull request without a Group gets one, named after its
 /// Launch. The Task reference points the agent to the QA report.
 pub fn fix(url: &str, language: Language) -> Result<Launch> {
+    fix_with_options(url, AgentOptions::default(), language)
+}
+
+/// Launches a QA fix with per-invocation agent overrides.
+pub fn fix_with_options(url: &str, agent: AgentOptions, language: Language) -> Result<Launch> {
     let messages = language.messages();
     let original = list()?
         .into_iter()
@@ -621,6 +752,7 @@ pub fn fix(url: &str, language: Language) -> Result<Launch> {
         .expect("an unused branch name");
     let launch = run(
         Options {
+            agent,
             repository: original.repository,
             template: FIX_TEMPLATE.to_string(),
             task: Some(format!(
@@ -772,6 +904,8 @@ pub fn follow(url: &str, language: Language) -> Result<Launch> {
         window: window.to_string(),
         pane,
         ai,
+        model: None,
+        effort: None,
         template: None,
         task: head.url.clone(),
         opens_pull_request: true,
@@ -989,7 +1123,13 @@ fn or_dash(value: &str) -> String {
 
 /// Runs the agent with the prompt in `prompt_file`, or resumes its latest conversation without
 /// one, then leaves a shell in the window.
-pub fn start_agent(ai: Ai, program: &Path, prompt_file: Option<&Path>) -> Result<()> {
+pub fn start_agent(
+    settings: AgentSettings,
+    program: &Path,
+    prompt_file: Option<&Path>,
+) -> Result<()> {
+    settings.validate()?;
+    let ai = settings.ai;
     let arguments = match prompt_file {
         Some(prompt_file) => ai.start_arguments(
             &std::fs::read_to_string(prompt_file)
@@ -997,21 +1137,53 @@ pub fn start_agent(ai: Ai, program: &Path, prompt_file: Option<&Path>) -> Result
         ),
         None => ai.resume_arguments(),
     };
-    let _ = Command::new(program).args(arguments).status();
+    let _ = Command::new(program)
+        .args(settings.arguments())
+        .args(arguments)
+        .status();
     let shell = std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
     Err(Command::new(shell).arg("-l").exec().into())
 }
 
-/// The AI a Launch of `template` starts: the Template's, then the config's, then Claude Code.
-/// An AI without tmux-aside status hooks is refused.
-fn choose_ai(template: &Template, language: Language) -> Result<Ai> {
-    let configured = config::load(&config::default_path()?)?.and_then(|config| config.ai);
-    match template.ai.clone().or(configured) {
-        None => Ok(Ai::Claude),
-        Some(name) => {
-            Ai::from_name(&name).ok_or_else(|| anyhow!((language.messages().unsupported_ai)(&name)))
-        }
-    }
+/// Resolves each setting from invocation, template, configuration, then agent defaults.
+fn choose_agent(
+    template: &Template,
+    options: AgentOptions,
+    language: Language,
+) -> Result<AgentSettings> {
+    let config = config::load(&config::default_path()?)?;
+    resolve_agent(template, options, config.as_ref(), language)
+}
+
+/// Resolves settings without I/O, rejecting unsupported agent/effort combinations.
+pub fn resolve_agent(
+    template: &Template,
+    options: AgentOptions,
+    config: Option<&config::Config>,
+    language: Language,
+) -> Result<AgentSettings> {
+    let name = options
+        .agent
+        .or_else(|| template.ai.clone())
+        .or_else(|| config.as_ref().and_then(|c| c.ai.clone()));
+    let ai = match name {
+        None => Ai::Claude,
+        Some(name) => Ai::from_name(&name)
+            .ok_or_else(|| anyhow!((language.messages().unsupported_ai)(&name)))?,
+    };
+    let settings = AgentSettings {
+        ai,
+        model: options
+            .model
+            .or_else(|| template.model.clone())
+            .or_else(|| config.as_ref().and_then(|c| c.model.clone())),
+        effort: options
+            .effort
+            .or_else(|| template.effort.clone())
+            .or_else(|| config.as_ref().and_then(|c| c.effort.clone())),
+    };
+    settings.validate()?;
+    Ok(settings)
 }
 
 /// The Template `name`: the user's own, then the Pack's, then the bundled one. A Pack that

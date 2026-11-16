@@ -86,6 +86,8 @@ enum Command {
     },
     /// Start an agent on a task in its own branch, worktree and background window
     Launch {
+        #[command(flatten)]
+        agent: launch::AgentOptions,
         /// Path to the repository clone
         repository: PathBuf,
         /// Template the agent is launched with
@@ -110,6 +112,8 @@ enum Command {
     },
     /// Launch one QA agent, with a fresh context and the qa template, for these pull requests
     Qa {
+        #[command(flatten)]
+        agent: launch::AgentOptions,
         /// URLs of the pull requests, each followed by a launch
         #[arg(required = true)]
         urls: Vec<String>,
@@ -126,6 +130,8 @@ enum Command {
     },
     /// Launch an agent that fixes what QA found in a pull request, in its repository and Group
     Fix {
+        #[command(flatten)]
+        agent: launch::AgentOptions,
         /// URL of the pull request whose QA failed, followed by a launch
         url: String,
     },
@@ -180,6 +186,10 @@ enum Command {
         ai: AiArg,
         #[arg(long)]
         program: PathBuf,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        effort: Option<String>,
         prompt: Option<PathBuf>,
     },
     #[command(name = "_sync", hide = true)]
@@ -280,6 +290,7 @@ fn main() -> Result<()> {
             defaults: yes,
         }),
         Command::Launch {
+            agent,
             repository,
             template,
             task,
@@ -296,6 +307,7 @@ fn main() -> Result<()> {
             };
             let launch = launch::run(
                 launch::Options {
+                    agent,
                     repository,
                     template,
                     task,
@@ -307,16 +319,16 @@ fn main() -> Result<()> {
             println!("{}", launch::announce(&launch, language));
             Ok(())
         }
-        Command::Qa { urls } => {
+        Command::Qa { urls, agent } => {
             let language = Language::detect();
-            let launch = launch::qa(&urls, language)?;
+            let launch = launch::qa_with_options(&urls, agent, language)?;
             println!("{}", launch::announce(&launch, language));
             Ok(())
         }
         Command::Deployed { urls, tasks } => launch::deployed(&urls, &tasks, Language::detect()),
-        Command::Fix { url } => {
+        Command::Fix { url, agent } => {
             let language = Language::detect();
-            let launch = launch::fix(&url, language)?;
+            let launch = launch::fix_with_options(&url, agent, language)?;
             println!("{}", launch::announce(&launch, language));
             Ok(())
         }
@@ -371,8 +383,18 @@ fn main() -> Result<()> {
         Command::Agent {
             ai,
             program,
+            model,
+            effort,
             prompt,
-        } => launch::start_agent(ai.into(), &program, prompt.as_deref()),
+        } => launch::start_agent(
+            launch::AgentSettings {
+                ai: ai.into(),
+                model,
+                effort,
+            },
+            &program,
+            prompt.as_deref(),
+        ),
         Command::Sync { window } => sidebar::sync_window(&window),
         Command::Reap => sidebar::reap(),
         Command::Select { window, fallback } => sidebar::select(&window, &fallback),

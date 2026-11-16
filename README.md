@@ -98,7 +98,20 @@ ai: codex          # claude, codex or agy (Antigravity); the config's `ai`, or c
 Implement ${task} and open a pull request.
 ```
 
-Agents are Claude Code by default; set `ai: codex` or `ai: agy` at the top of the config to change it, and a template's `ai` wins over it. The watcher automatically nudges Claude Code and Antigravity only after a trusted completion hook. Codex terminal observations provide sidebar status, but do not authorize automatic nudges.
+Agents are Claude Code by default; set `ai: codex` or `ai: agy` at the top of the config to change it, and a template's `ai` wins over it. `--agent` overrides both. The watcher automatically nudges Claude Code and Antigravity only after a trusted completion hook. Codex terminal observations provide sidebar status, but do not authorize automatic nudges.
+
+Choose an agent, model and reasoning effort per task:
+
+```sh
+tmux-aside launch ~/src/app --template adopt --pr https://github.com/org/app/pull/12 \
+  --agent codex --model <model-name> --effort high
+```
+
+`launch`, `qa` and `fix` accept `--agent claude|codex|agy`, `--model` and `--effort`. Each value resolves independently: command-line flag, template front matter (`ai`, `model`, `effort`), config (including Pack defaults), then the agent's own defaults for model and effort. Omit model and effort to preserve the agent's defaults. When switching agents, also override any inherited model that belongs to the previous agent. Model availability is checked by the agent itself.
+
+Model becomes `--model` for all three agents. Effort becomes `-c 'model_reasoning_effort="<value>"'` for Codex and `--effort <value>` for Claude and Antigravity. Supported effort values are `none|minimal|low|medium|high|xhigh` for Codex, `low|medium|high|max` for Claude, and `low|medium|high|xhigh|max` for Antigravity; the selected model may impose further limits. Invalid effort values fail before a launch creates a worktree or window. These options do not change agent permissions.
+
+Launch records and `status --json` include the resolved model and effort when specified. `resurrect` reuses these recorded settings even if the config later changes. Older records without these fields retain the agent's defaults. Automatic QA and fix launches resolve their own template/config settings; they do not inherit the implementation agent's model.
 
 tmux-aside ships an `implement` template, an `adopt` one for `--pr`, a `qa` one for `tmux-aside qa` and a `fix` one for `tmux-aside fix`. Your own go in `$XDG_CONFIG_HOME/tmux-aside/templates/NAME.md` (`~/.config/tmux-aside/templates/` by default) and replace a bundled one with the same name.
 

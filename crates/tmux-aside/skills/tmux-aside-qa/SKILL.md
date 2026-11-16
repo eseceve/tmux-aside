@@ -14,6 +14,10 @@ Turn the request into `tmux-aside` commands. Hold no logic of your own: the QA a
 - `tmux-aside fix <url>`: an agent that fixes what the QA of that pull request found, on a new branch in the same group. QA reruns for both once the fix reaches QA.
 - `tmux-aside remove <QA launch id>`: once QA finished, close the QA agent's window and forget its launch; the clone it worked in is kept. Its id starts with the repository and `qa-` in `tmux-aside status --json`.
 
+## Agent settings
+
+When the user names an agent, model or reasoning effort, pass it explicitly as `--agent <claude|codex|agy>`, `--model <name>` or `--effort <value>` on `launch`, `qa` or `fix`. Omit settings the user did not choose: flags override the template, which overrides the config. Model names belong to the selected agent; do not invent or translate them. `resurrect` keeps the settings saved with each launch. `status --json` includes `model` and `effort` when specified.
+
 ## Choosing
 
 1. **Pull requests**: the ones the user names. Pull requests of one group are tested together, so pass all of a group's pull requests to one `tmux-aside qa`, unless the user asks otherwise.

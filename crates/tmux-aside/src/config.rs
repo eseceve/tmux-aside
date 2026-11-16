@@ -77,6 +77,10 @@ pub struct Config {
     /// The AI launched agents start (`claude`, `codex` or `agy`), unless their Template names
     /// one; Claude Code when unset.
     pub ai: Option<String>,
+    /// Default model passed to launched agents.
+    pub model: Option<String>,
+    /// Default reasoning effort passed to launched agents.
+    pub effort: Option<String>,
     /// The folder of the Pack whose Criteria and Templates replace the defaults.
     pub pack: Option<PathBuf>,
     /// Where the Watcher finds pull requests to follow without a Launch.
@@ -177,6 +181,8 @@ pub(crate) struct RawConfig {
     pub(crate) criteria: Criteria,
     pub(crate) auto_qa: Option<bool>,
     pub(crate) ai: Option<String>,
+    pub(crate) model: Option<String>,
+    pub(crate) effort: Option<String>,
     pub(crate) pack: Option<PathBuf>,
     pub(crate) discover: Option<Vec<DiscoverySource>>,
     pub(crate) on_deployed: Option<DeployedAction>,
@@ -215,6 +221,8 @@ impl RawConfig {
             language: self.language.or(pack.language),
             auto_qa: self.auto_qa.or(pack.auto_qa),
             ai: self.ai.or(pack.ai),
+            model: self.model.or(pack.model),
+            effort: self.effort.or(pack.effort),
             discover: self.discover.or(pack.discover),
             ..self
         }
@@ -331,6 +339,8 @@ fn build(raw: RawConfig) -> Result<Config> {
         criteria,
         auto_qa,
         ai,
+        model,
+        effort,
         pack,
         discover,
         on_deployed,
@@ -382,6 +392,8 @@ fn build(raw: RawConfig) -> Result<Config> {
         criteria,
         auto_qa,
         ai,
+        model,
+        effort,
         pack,
         discover,
         on_deployed,

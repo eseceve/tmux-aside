@@ -769,6 +769,8 @@ pub fn discovered(url: &str) -> Option<Launch> {
         window: String::new(),
         pane: String::new(),
         ai: Ai::Claude,
+        model: None,
+        effort: None,
         template: None,
         task: url.to_string(),
         opens_pull_request: true,

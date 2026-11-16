@@ -1,4 +1,11 @@
 #!/bin/sh
+printf '%s\n' "$@" > "$PWD/.agent-args"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --model|--effort|-c) shift 2 ;;
+        *) break ;;
+    esac
+done
 [ "$1" = -p ] && { printf %s "$2" > "$PWD/.agent-prompt"; exit 0; }
 printf %s "$1" > "$PWD/.agent-prompt.partial"
 mv "$PWD/.agent-prompt.partial" "$PWD/.agent-prompt"

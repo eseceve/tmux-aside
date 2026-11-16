@@ -15,7 +15,11 @@ fn launched(server: &TmuxServer, repo: &Repo, branch: &str) -> PathBuf {
     wait_for("the agent to start", || {
         worktree.join(".agent-prompt").exists()
     });
-    std::fs::write(repo.clone().join(".git/info/exclude"), ".agent-prompt\n").unwrap();
+    std::fs::write(
+        repo.clone().join(".git/info/exclude"),
+        ".agent-prompt\n.agent-args\n",
+    )
+    .unwrap();
     worktree
 }
 

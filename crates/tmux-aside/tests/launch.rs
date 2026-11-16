@@ -1200,3 +1200,130 @@ fn status_without_a_recorded_stage_shows_a_dash() {
 
     assert!(launch.get("stage").is_none());
 }
+
+#[test]
+fn invocation_overrides_template_and_config_and_resurrection_preserves_native_arguments() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    server
+        .home
+        .write_config("ai: agy\nmodel: config-model\neffort: low\n");
+    own_template(
+        &server,
+        "custom",
+        "---\nai: claude\nmodel: template-model\neffort: medium\n---\nDo ${task}.\n",
+    );
+    launch_ok(
+        &server,
+        &repo,
+        &[
+            "--template",
+            "custom",
+            "--task",
+            "x",
+            "--branch",
+            "feat/options",
+            "--agent",
+            "codex",
+            "--model",
+            "model with 'quotes'",
+            "--effort",
+            "high",
+        ],
+    );
+    let worktree = repo.worktree("feat-options");
+    let prompt = worktree.join(".agent-prompt");
+    wait_for("agent starts", || prompt.exists());
+    assert_eq!(std::fs::read_to_string(&prompt).unwrap(), "Do x.\n");
+    let before = status_json(&server).remove(0);
+    assert_eq!(before["ai"], "codex");
+    assert_eq!(before["model"], "model with 'quotes'");
+    assert_eq!(before["effort"], "high");
+    let args = worktree.join(".agent-args");
+    assert_eq!(
+        std::fs::read_to_string(&args).unwrap(),
+        "--model\nmodel with 'quotes'\n-c\nmodel_reasoning_effort=\"high\"\nDo x.\n\n"
+    );
+    server.tmux(&["kill-window", "-t", before["window"].as_str().unwrap()]);
+    std::fs::remove_file(&prompt).unwrap();
+    std::fs::remove_file(&args).unwrap();
+    server
+        .home
+        .write_config("ai: claude\nmodel: changed\neffort: low\n");
+    resurrect(&server, &[]);
+    wait_for("agent resumes", || prompt.exists());
+    assert_eq!(
+        std::fs::read_to_string(&args).unwrap(),
+        "--model\nmodel with 'quotes'\n-c\nmodel_reasoning_effort=\"high\"\nresume\n--last\n"
+    );
+    let after = status_json(&server).remove(0);
+    assert_eq!(after["model"], before["model"]);
+    assert_eq!(after["effort"], before["effort"]);
+}
+
+#[test]
+fn omitted_flags_inherit_each_setting_from_template_then_config() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    server
+        .home
+        .write_config("ai: codex\nmodel: config-model\neffort: low\n");
+    own_template(
+        &server,
+        "custom",
+        "---\nmodel: template-model\n---\nDo ${task}.\n",
+    );
+    launch_ok(
+        &server,
+        &repo,
+        &[
+            "--template",
+            "custom",
+            "--task",
+            "x",
+            "--branch",
+            "feat/inherit",
+        ],
+    );
+    let launch = status_json(&server).remove(0);
+    assert_eq!(launch["ai"], "codex");
+    assert_eq!(launch["model"], "template-model");
+    assert_eq!(launch["effort"], "low");
+}
+
+#[test]
+fn unsupported_effort_fails_before_creating_a_worktree_or_window() {
+    let server = TmuxServer::start(1);
+    let repo = Repo::new();
+    let before = server.window_ids();
+    let mut args = implement("feat/invalid");
+    args.extend(["--agent", "claude", "--effort", "xhigh"]);
+    let output = launch(&server, &repo, &args);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported effort"));
+    assert!(!repo.worktree("feat-invalid").exists());
+    assert_eq!(server.window_ids(), before);
+}
+
+#[test]
+fn settings_translate_to_each_agents_native_flags_without_permission_overrides() {
+    use tmux_aside::{launch::AgentSettings, setup::Ai};
+    for ai in [Ai::Claude, Ai::Codex, Ai::Agy] {
+        let settings = AgentSettings {
+            ai,
+            model: Some("example".into()),
+            effort: Some("high".into()),
+        };
+        settings.validate().unwrap();
+        let expected = match ai {
+            Ai::Codex => vec![
+                "--model",
+                "example",
+                "-c",
+                "model_reasoning_effort=\"high\"",
+            ],
+            _ => vec!["--model", "example", "--effort", "high"],
+        };
+        assert_eq!(settings.arguments(), expected);
+    }
+}

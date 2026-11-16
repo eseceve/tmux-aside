@@ -16,6 +16,10 @@ Turn the request into `tmux-aside` commands. Hold no logic of your own: tmux-asi
 - `tmux-aside prune [<path>...] --dry-run`, then without `--dry-run`: remove the worktrees no launch follows whose pull request was merged or closed. Show the dry-run list to the user before running it.
 - `tmux-aside resurrect [--dry-run]`: reopen the agent of every launch whose window is gone, resuming its conversation. Run it with `--dry-run` first and show the list.
 
+## Agent settings
+
+When the user names an agent, model or reasoning effort, pass it explicitly as `--agent <claude|codex|agy>`, `--model <name>` or `--effort <value>` on `launch`, `qa` or `fix`. Omit settings the user did not choose: flags override the template, which overrides the config. Model names belong to the selected agent; do not invent or translate them. `resurrect` keeps the settings saved with each launch. `status --json` includes `model` and `effort` when specified.
+
 ## Choosing
 
 1. **Repositories**: `<repo>` is a path to a local clone. Use the ones the user names; when a task spans several repositories, launch it once per repository with the same `--group`. If you cannot tell where a repository is cloned, ask.
