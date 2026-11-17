@@ -244,12 +244,26 @@ impl From<AiArg> for Ai {
     }
 }
 
+/// The CLI without its hidden internal subcommands, which `clap_complete` would otherwise offer.
+fn public_command() -> clap::Command {
+    let cli = Cli::command();
+    let visible: Vec<clap::Command> = cli
+        .get_subcommands()
+        .filter(|subcommand| !subcommand.is_hide_set())
+        .cloned()
+        .collect();
+    clap::Command::new("tmux-aside")
+        .version(env!("CARGO_PKG_VERSION"))
+        .subcommand_required(true)
+        .subcommands(visible)
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Completion { shell } => {
             clap_complete::generate(
                 shell,
-                &mut Cli::command(),
+                &mut public_command(),
                 "tmux-aside",
                 &mut std::io::stdout(),
             );

@@ -70,3 +70,19 @@ fn bash_zsh_and_fish_complete_agent_and_effort_values() {
         }
     }
 }
+
+#[test]
+fn completion_scripts_never_offer_internal_subcommands() {
+    for shell in ["bash", "zsh", "fish", "powershell", "elvish"] {
+        let script = completion(shell);
+        for internal in ["_agent", "_sync", "_select", "_reap", "_render", "_daemon"] {
+            assert!(
+                !script.contains(&format!("'{internal}:"))
+                    && !script.contains(&format!(" {internal} "))
+                    && !script.contains(&format!("'{internal}'"))
+                    && !script.contains(&format!("\"{internal}\"")),
+                "{shell} completion offers {internal}"
+            );
+        }
+    }
+}
