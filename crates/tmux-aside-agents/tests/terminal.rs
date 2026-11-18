@@ -49,6 +49,16 @@ fn process_identity_distinguishes_restarts_and_ignores_sidebar_plugins() {
 }
 
 #[test]
+fn an_agent_launched_by_any_wrapper_is_found_behind_it() {
+    let table = " 70 1 /opt/bin/terminal-orchestrator\n 71 70 codex\n 80 1 /bin/zsh\n 81 80 /bin/tmux-aside-agents\n";
+    assert_eq!(
+        pane_process(70, "terminal-orches", table),
+        ("codex".into(), Some(71))
+    );
+    assert_eq!(pane_process(80, "zsh", table), ("zsh".into(), None));
+}
+
+#[test]
 fn a_codex_hook_is_identified_by_ancestry_even_when_its_pane_now_runs_claude() {
     let table = "100 1 codex\n101 100 /bin/sh\n102 101 tmux-aside-agents\n200 1 claude\n201 200 sh\n202 201 tmux-aside-agents";
     assert!(from_codex(102, table));

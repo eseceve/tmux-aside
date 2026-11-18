@@ -316,11 +316,7 @@ fn record(status: Option<Status>, background: bool) -> Result<()> {
     let [pid, command, path, window] = fields[..] else {
         bail!("unexpected pane info: {info}");
     };
-    let command = if command == "tmux-aside" {
-        pane_process(pid.parse()?, command, &process_table()).0
-    } else {
-        command.to_string()
-    };
+    let command = pane_process(pid.parse()?, command, &process_table()).0;
     if matches!(command.as_str(), "tmux-aside" | "codex") {
         return Ok(());
     }

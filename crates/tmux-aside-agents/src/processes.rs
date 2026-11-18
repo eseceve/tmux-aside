@@ -22,27 +22,27 @@ fn parse(table: &str) -> Vec<Process<'_>> {
         .collect()
 }
 
-/// Resolve a foreground agent behind its pane shell or tmux-aside launcher.
+/// Resolve a foreground agent behind its pane shell or a launcher that runs it as a child
+/// in the same process group (tmux-aside, terminal-orchestrator), which tmux reports instead.
 /// The process PID changes when an agent restarts within the same pane shell.
 pub fn pane_process(pane_pid: u32, foreground: &str, table: &str) -> (String, Option<u32>) {
     let processes = parse(table);
     let supported = |name: &str| matches!(name, "codex" | "claude" | "agy");
-    if foreground == "tmux-aside" {
+    if !supported(foreground) {
         if let Some(child) = processes
             .iter()
             .find(|p| p.parent == pane_pid && supported(p.name))
         {
             return (child.name.to_string(), Some(child.pid));
         }
-    } else if supported(foreground)
-        && let Some(process) = processes
-            .iter()
-            .find(|p| p.pid == pane_pid && p.name == foreground)
-            .or_else(|| {
-                processes
-                    .iter()
-                    .find(|p| p.parent == pane_pid && p.name == foreground)
-            })
+    } else if let Some(process) = processes
+        .iter()
+        .find(|p| p.pid == pane_pid && p.name == foreground)
+        .or_else(|| {
+            processes
+                .iter()
+                .find(|p| p.parent == pane_pid && p.name == foreground)
+        })
     {
         return (foreground.to_string(), Some(process.pid));
     }
