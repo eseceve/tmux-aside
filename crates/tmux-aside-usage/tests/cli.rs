@@ -190,6 +190,29 @@ fn codex_limits_are_cached_for_the_configured_interval() {
 }
 
 #[test]
+fn only_running_finds_codex_behind_a_launcher_that_tmux_reports_instead() {
+    let home = Home::new();
+    home.fake_codex(25);
+    for (name, output) in [
+        ("tmux", "100 terminal-orches"),
+        ("ps", "100 1 /opt/terminal-orchestrator\n101 100 codex"),
+    ] {
+        let script = home.0.join("bin").join(name);
+        std::fs::write(&script, format!("#!/bin/sh\nprintf '{output}\\n'\n")).unwrap();
+        Command::new("chmod")
+            .arg("+x")
+            .arg(&script)
+            .status()
+            .unwrap();
+    }
+
+    let rows = snapshot_rows(&home.command(&["--only-running"]).output().unwrap());
+
+    let groups: Vec<_> = rows.iter().filter_map(|row| row.group.clone()).collect();
+    assert_eq!(groups, ["Codex"]);
+}
+
+#[test]
 fn setup_wraps_the_claude_statusline_once_and_keeps_the_rest() {
     let home = Home::new();
     let settings = home.0.join("claude/settings.json");

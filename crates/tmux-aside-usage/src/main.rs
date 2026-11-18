@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use tmux_aside::config::{parse_duration, state_dir};
 use tmux_aside::i18n::Language;
 use tmux_aside::protocol::{PLUGIN_PROTOCOL, PluginMessage};
+use tmux_aside_agents::processes::pane_process;
 use tmux_aside_usage::{
     claude_windows, codex_windows, messages, rows, statusline_command, wrapped_statusline,
 };
@@ -137,15 +138,29 @@ fn run_plugin(codex_interval: Duration, only_running: bool) -> Result<()> {
     })
 }
 
-/// Commands running in the panes of the tmux server.
+/// Commands running in the panes of the tmux server, looking behind launchers such as
+/// terminal-orchestrator that tmux reports instead of the agent they run.
 fn running_commands() -> Vec<String> {
+    let processes = Process::new("ps")
+        .args(["-axo", "pid=,ppid=,comm="])
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default();
     Process::new("tmux")
-        .args(["list-panes", "-a", "-F", "#{pane_current_command}"])
+        .args([
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pane_pid} #{pane_current_command}",
+        ])
         .output()
         .map(|output| {
             String::from_utf8_lossy(&output.stdout)
                 .lines()
-                .map(str::to_string)
+                .filter_map(|line| {
+                    let (pid, command) = line.split_once(' ')?;
+                    Some(pane_process(pid.parse().ok()?, command, &processes).0)
+                })
                 .collect()
         })
         .unwrap_or_default()
