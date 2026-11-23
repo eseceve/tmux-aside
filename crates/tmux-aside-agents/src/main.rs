@@ -402,23 +402,21 @@ fn run_plugin(
         });
     }
     let diffs = Arc::new(Mutex::new(HashMap::new()));
-    if diff {
-        let dir = dir.clone();
+    let diff_requests = diff.then(|| {
+        let (send, receive) = mpsc::sync_channel::<Vec<(String, String)>>(0);
         let diffs = diffs.clone();
         std::thread::spawn(move || {
-            loop {
-                let agents = live_panes()
-                    .map(|live| reconcile(load_states(&dir), &live).agents)
-                    .unwrap_or_default();
-                let found: HashMap<String, Diff> = agents
-                    .iter()
-                    .filter_map(|agent| Some((agent.pane_id.clone(), branch_diff(&agent.workdir)?)))
+            while let Ok(panes) = receive.recv() {
+                let found: HashMap<String, Diff> = panes
+                    .into_iter()
+                    .filter_map(|(pane, workdir)| Some((pane, branch_diff(&workdir)?)))
                     .collect();
                 *diffs.lock().unwrap() = found;
                 std::thread::sleep(DIFF_POLL);
             }
         });
-    }
+        send
+    });
     let mut screens = Screens::default();
     let mut last = String::new();
     let mut seen: Option<HashMap<String, Option<Status>>> = None;
@@ -438,6 +436,13 @@ fn run_plugin(
         let live = live_panes();
         match live.and_then(|live| Ok((current_agents(&dir, &live, &detect)?, live))) {
             Ok((mut agents, live)) => {
+                if let Some(send) = &diff_requests {
+                    let panes = agents
+                        .iter()
+                        .map(|agent| (agent.pane_id.clone(), agent.workdir.clone()))
+                        .collect();
+                    let _ = send.try_send(panes);
+                }
                 let diffs = diffs.lock().unwrap();
                 for agent in &mut agents {
                     agent.diff = diffs.get(&agent.pane_id).copied();

@@ -135,6 +135,30 @@ fn the_plugin_hides_elapsed_time_unless_asked() {
 }
 
 #[test]
+fn the_plugin_shows_uncommitted_diff_stats_for_a_registered_pane() {
+    let tmux = Tmux::start();
+    let pane = tmux.split();
+    let repo = tmux.dir.join("repo");
+    std::fs::write(repo.join("change.txt"), "first line\nsecond line\n").unwrap();
+    assert!(
+        std::process::Command::new("git")
+            .current_dir(repo)
+            .args(["add", "change.txt"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(tmux.run(Some(&pane), &["register"]).status.success());
+
+    let mut plugin = Plugin::start(&tmux, &["--diff"]);
+    plugin.next();
+    plugin.snapshot_where("agent diff stats", |rows| {
+        rows.iter()
+            .any(|row| row.lines.iter().any(|line| line.contains("+2 -0")))
+    });
+}
+
+#[test]
 fn the_plugin_shows_the_pull_request_of_the_agents_branch() {
     let tmux = Tmux::start();
     tmux.fake_gh(
